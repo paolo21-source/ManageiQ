@@ -8,5 +8,5 @@ images:
     name: quay.io/ansible/awx-ee:latest
 
 additional_build_steps:
-  append:
-    - RUN pip install --no-cache-dir openstacksdk
+  append_final: |
+    RUN pip install --no-cache-dir openstacksdk
