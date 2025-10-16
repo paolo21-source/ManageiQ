@@ -5,7 +5,7 @@
   
   vars:
     # CORREZIONE: Usa esplicitamente HTTP per la connessione interna tra pod
-    awx_host: "http://awx-demo-service" 
+    awx_host: "https://abcd-123-45-67-89.ngrok-free.app" 
     awx_user: "admin"
     awx_password: "1234" 
     awx_validate_certs: false
