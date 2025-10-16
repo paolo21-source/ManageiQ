@@ -1,17 +1,16 @@
 ---
 - name: Schedule Cinder Volume Backup Jobs on AWX
   hosts: localhost
+  connection: local  # ← FONDAMENTALE
   gather_facts: false
-  
+
   vars:
-    # CORREZIONE: Usa esplicitamente HTTP per la connessione interna tra pod
-    awx_host: "https://overnourishingly-unsturdy-andre.ngrok-free.dev" 
+    awx_host: "https://abcd-123-45-67-89.ngrok-free.app"  # ← il tuo ngrok URL
     awx_user: "admin"
     awx_password: "1234" 
     awx_validate_certs: false
 
   tasks:
-    # Tutti i task restano uguali, usano le variabili aggiornate
     - name: Create AWX job template for volume backup
       awx.awx.job_template:
         name: "Cinder Volume Backup"
@@ -20,9 +19,8 @@
         inventory: "OpenStack Inventory"
         state: present
         controller_host: "{{ awx_host }}"
-        controller_username: "{{ awx_user }}"
-        controller_password: "{{ awx_password }}"
-        validate_certs: "{{ awx_validate_certs }}" 
+        controller_oauthtoken: "{{ awx_token }}"
+        validate_certs: "{{ awx_validate_certs }}"
 
     - name: Create AWX schedule for daily backup
       awx.awx.schedule:
@@ -31,8 +29,7 @@
         rrule: "DTSTART;TZID=UTC:20251009T000000 RRULE:FREQ=DAILY;INTERVAL=1"
         state: present
         controller_host: "{{ awx_host }}"
-        controller_username: "{{ awx_user }}"
-        controller_password: "{{ awx_password }}"
+        controller_oauthtoken: "{{ awx_token }}"
         validate_certs: "{{ awx_validate_certs }}"
 
     - name: Create AWX schedule for weekly backup
@@ -42,6 +39,6 @@
         rrule: "DTSTART;TZID=UTC:20251009T000000 RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO"
         state: present
         controller_host: "{{ awx_host }}"
-        controller_username: "{{ awx_user }}"
-        controller_password: "{{ awx_password }}"
+        controller_oauthtoken: "{{ awx_token }}"
         validate_certs: "{{ awx_validate_certs }}"
+
