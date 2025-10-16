@@ -1,0 +1,12 @@
+---
+- name: Execute OpenStack Cinder Volume Backup
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ensure OpenStack volume backup is created
+      openstack.cloud.volume_backup:
+        volume: "{{ volume_id }}"  # Usa la variabile passata da AWX
+        state: present
+        force: true  # <=== FORZA IL BACKUP ANCHE SE IL VOLUME È IN USO
+        name: "backup-{{ volume_id }}-{{ lookup('pipe', 'date +%Y%m%d%H%M') }}" 
+      delegate_to: localhost
