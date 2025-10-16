@@ -13,9 +13,9 @@
     - name: Create AWX job template for volume backup
       awx.awx.job_template:
         name: "Cinder Volume Backup"
-        project: "OpenStack Backups"
+        project: "project-test"
         playbook: "playbook-volume-backup.yml"
-        inventory: "OpenStack Inventory"
+        inventory: "inventory-backup-test"
         state: present
         controller_host: "{{ awx_host }}"
         controller_oauthtoken: "{{ awx_token }}"
