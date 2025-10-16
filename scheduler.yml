@@ -14,7 +14,7 @@
       awx.awx.job_template:
         name: "Cinder Volume Backup"
         project: "project-test"
-        playbook: "playbook-volume-backup.yml"
+        playbook: "backup.yml"
         inventory: "inventory-backup-test"
         state: present
         controller_host: "{{ awx_host }}"
