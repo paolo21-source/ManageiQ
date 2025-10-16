@@ -1,0 +1,47 @@
+---
+- name: Schedule Cinder Volume Backup Jobs on AWX
+  hosts: localhost
+  gather_facts: false
+  
+  vars:
+    # CORREZIONE: Usa esplicitamente HTTP per la connessione interna tra pod
+    awx_host: "http://awx-demo-service" 
+    awx_user: "admin"
+    awx_password: "0880" 
+    awx_validate_certs: false
+
+  tasks:
+    # Tutti i task restano uguali, usano le variabili aggiornate
+    - name: Create AWX job template for volume backup
+      awx.awx.job_template:
+        name: "Cinder Volume Backup"
+        project: "OpenStack Backups"
+        playbook: "playbook-volume-backup.yml"
+        inventory: "OpenStack Inventory"
+        state: present
+        controller_host: "{{ awx_host }}"
+        controller_username: "{{ awx_user }}"
+        controller_password: "{{ awx_password }}"
+        validate_certs: "{{ awx_validate_certs }}" 
+
+    - name: Create AWX schedule for daily backup
+      awx.awx.schedule:
+        name: "Daily Cinder Backup"
+        unified_job_template: "Cinder Volume Backup"
+        rrule: "DTSTART;TZID=UTC:20251009T000000 RRULE:FREQ=DAILY;INTERVAL=1"
+        state: present
+        controller_host: "{{ awx_host }}"
+        controller_username: "{{ awx_user }}"
+        controller_password: "{{ awx_password }}"
+        validate_certs: "{{ awx_validate_certs }}"
+
+    - name: Create AWX schedule for weekly backup
+      awx.awx.schedule:
+        name: "Weekly Cinder Backup"
+        unified_job_template: "Cinder Volume Backup"
+        rrule: "DTSTART;TZID=UTC:20251009T000000 RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO"
+        state: present
+        controller_host: "{{ awx_host }}"
+        controller_username: "{{ awx_user }}"
+        controller_password: "{{ awx_password }}"
+        validate_certs: "{{ awx_validate_certs }}"
