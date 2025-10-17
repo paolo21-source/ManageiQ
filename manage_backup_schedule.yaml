@@ -21,14 +21,18 @@
     
     - name: Get volume info from OpenStack
       openstack.cloud.volume_info:
-        volume: "{{ volume_id }}"
+        name: "{{ volume_id }}"
       register: volume_info
       when: backup_action == "enable" or backup_action == "disable"
+      ignore_errors: true
       
-    - name: Set volume name
+    - name: Set volume name from OpenStack
       set_fact:
         volume_name: "{{ volume_info.volumes[0].name | default('unknown') }}"
-      when: volume_info.volumes is defined and volume_info.volumes | length > 0
+      when: 
+        - volume_info is defined
+        - volume_info.volumes is defined
+        - volume_info.volumes | length > 0
     
     - name: Set default volume name if not found
       set_fact:
