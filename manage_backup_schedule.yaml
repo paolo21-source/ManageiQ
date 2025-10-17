@@ -15,15 +15,15 @@
       assert:
         that:
           - volume_id is defined and volume_id | length > 0
-          - action is defined and action | length > 0
-        fail_msg: "ERROR: Missing required variables (volume_id, action)"
-        success_msg: "Variables OK - volume_id: {{ volume_id }}, action: {{ action }}"
+          - backup_action is defined and backup_action | length > 0
+        fail_msg: "ERROR: Missing required variables (volume_id, backup_action)"
+        success_msg: "Variables OK - volume_id: {{ volume_id }}, backup_action: {{ backup_action }}"
     
     - name: Get volume info from OpenStack
       openstack.cloud.volume_info:
         volume: "{{ volume_id }}"
       register: volume_info
-      when: action == "enable" or action == "disable"
+      when: backup_action == "enable" or backup_action == "disable"
       
     - name: Set volume name
       set_fact:
@@ -37,7 +37,7 @@
     
     - name: Log action
       debug:
-        msg: "Action: {{ action }}, Volume: {{ volume_name }} ({{ volume_id }}), Frequency: {{ frequency | default('N/A') }}"
+        msg: "Action: {{ backup_action }}, Volume: {{ volume_name }} ({{ volume_id }}), Frequency: {{ frequency | default('N/A') }}"
     
     # STEP 1: Delete existing schedules for this volume
     - name: Delete existing schedules for this volume
@@ -59,7 +59,7 @@
       debug:
         msg: "Deleted existing schedules (if any)"
     
-    # STEP 2: Create new schedule (only if action=enable)
+    # STEP 2: Create new schedule (only if backup_action=enable)
     - name: Create new schedule
       awx.awx.schedule:
         name: "{{ schedule_name }}"
@@ -84,15 +84,15 @@
           {% elif frequency == 'weekly' %}DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m%d') }}T020000 RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO
           {% elif frequency == 'monthly' %}DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m') }}01T020000 RRULE:FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=1
           {% endif %}
-      when: action == "enable"
+      when: backup_action == "enable"
       register: create_result
     
     - name: Show success message (enable)
       debug:
         msg: "✓ Backup schedule ATTIVATO per volume {{ volume_name }} ({{ volume_id }}) - Frequenza: {{ frequency }}"
-      when: action == "enable"
+      when: backup_action == "enable"
     
     - name: Show success message (disable)
       debug:
         msg: "✓ Backup schedule DISATTIVATO per volume {{ volume_name }} ({{ volume_id }})"
-      when: action == "disable"
+      when: backup_action == "disable"
