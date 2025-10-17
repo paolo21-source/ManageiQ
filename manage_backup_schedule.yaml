@@ -1,0 +1,98 @@
+---
+- name: Manage Cinder Volume Backup Schedule
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  
+  vars:
+    awx_host: "http://awx-demo-service"
+    awx_user: "admin"
+    awx_password: "1234"
+    awx_validate_certs: false
+  
+  tasks:
+    - name: Validate required variables
+      assert:
+        that:
+          - volume_id is defined and volume_id | length > 0
+          - action is defined and action | length > 0
+        fail_msg: "ERROR: Missing required variables (volume_id, action)"
+        success_msg: "Variables OK - volume_id: {{ volume_id }}, action: {{ action }}"
+    
+    - name: Get volume info from OpenStack
+      openstack.cloud.volume_info:
+        volume: "{{ volume_id }}"
+      register: volume_info
+      when: action == "enable" or action == "disable"
+      
+    - name: Set volume name
+      set_fact:
+        volume_name: "{{ volume_info.volumes[0].name | default('unknown') }}"
+      when: volume_info.volumes is defined and volume_info.volumes | length > 0
+    
+    - name: Set default volume name if not found
+      set_fact:
+        volume_name: "volume-{{ volume_id[:8] }}"
+      when: volume_name is not defined
+    
+    - name: Log action
+      debug:
+        msg: "Action: {{ action }}, Volume: {{ volume_name }} ({{ volume_id }}), Frequency: {{ frequency | default('N/A') }}"
+    
+    # STEP 1: Delete existing schedules for this volume
+    - name: Delete existing schedules for this volume
+      awx.awx.schedule:
+        name: "{{ item }}"
+        state: absent
+        controller_host: "{{ awx_host }}"
+        controller_username: "{{ awx_user }}"
+        controller_password: "{{ awx_password }}"
+        validate_certs: "{{ awx_validate_certs }}"
+      loop:
+        - "Daily Backup - {{ volume_name }} ({{ volume_id }})"
+        - "Weekly Backup - {{ volume_name }} ({{ volume_id }})"
+        - "Monthly Backup - {{ volume_name }} ({{ volume_id }})"
+      ignore_errors: true
+      register: delete_result
+    
+    - name: Show delete result
+      debug:
+        msg: "Deleted existing schedules (if any)"
+    
+    # STEP 2: Create new schedule (only if action=enable)
+    - name: Create new schedule
+      awx.awx.schedule:
+        name: "{{ schedule_name }}"
+        unified_job_template: "Cinder Volume Backup"
+        rrule: "{{ schedule_rrule }}"
+        extra_data:
+          volume_id: "{{ volume_id }}"
+        state: present
+        controller_host: "{{ awx_host }}"
+        controller_username: "{{ awx_user }}"
+        controller_password: "{{ awx_password }}"
+        validate_certs: "{{ awx_validate_certs }}"
+      vars:
+        schedule_name: >-
+          {% if frequency == 'daily' %}Daily Backup - {{ volume_name }} ({{ volume_id }})
+          {% elif frequency == 'weekly' %}Weekly Backup - {{ volume_name }} ({{ volume_id }})
+          {% elif frequency == 'monthly' %}Monthly Backup - {{ volume_name }} ({{ volume_id }})
+          {% else %}Unknown Backup - {{ volume_name }} ({{ volume_id }})
+          {% endif %}
+        schedule_rrule: >-
+          {% if frequency == 'daily' %}DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m%d') }}T020000 RRULE:FREQ=DAILY;INTERVAL=1
+          {% elif frequency == 'weekly' %}DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m%d') }}T020000 RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO
+          {% elif frequency == 'monthly' %}DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m') }}01T020000 RRULE:FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=1
+          {% endif %}
+      when: action == "enable"
+      register: create_result
+    
+    - name: Show success message (enable)
+      debug:
+        msg: "✓ Backup schedule ATTIVATO per volume {{ volume_name }} ({{ volume_id }}) - Frequenza: {{ frequency }}"
+      when: action == "enable"
+    
+    - name: Show success message (disable)
+      debug:
+        msg: "✓ Backup schedule DISATTIVATO per volume {{ volume_name }} ({{ volume_id }})"
+      when: action == "disable"
