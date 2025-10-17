@@ -22,16 +22,7 @@
         var: backup_result.backup
       when: backup_result.backup is defined
       tags: debug
-```
 
-**Nota:** ho messo `gather_facts: true` per avere `ansible_date_time` disponibile.
-
----
-
-## 🧪 Test del playbook
-
-Quando lanci il job da ManageIQ, nei log di AWX dovresti vedere:
-```
 TASK [Debug - Show volume_id received from ManageIQ] ***
 ok: [localhost] => {
     "msg": "Creating backup for volume: fa142b6c-153d-4acf-8408-ee7e5c56eff7"
