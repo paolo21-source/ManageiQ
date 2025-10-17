@@ -2,20 +2,49 @@
 - name: Execute OpenStack Cinder Volume Backup
   hosts: localhost
   connection: local
-  gather_facts: false
+  gather_facts: true  # ← serve per ansible_date_time
   tasks:
     - name: Debug - Show volume_id received from ManageIQ
       debug:
         msg: "Creating backup for volume: {{ volume_id }}"
+      tags: debug
     
     - name: Ensure OpenStack volume backup is created
       openstack.cloud.volume_backup:
         volume: "{{ volume_id }}"
         state: present
         force: true
-        name: "backup-{{ volume_id }}-{{ '%Y%m%d%H%M' | strftime }}"
+        name: "backup-{{ volume_id }}-{{ ansible_date_time.iso8601_basic_short }}"
       register: backup_result
     
     - name: Show backup result
       debug:
-        msg: "Backup created successfully: {{ backup_result.backup.name }}"
+        var: backup_result.backup
+      when: backup_result.backup is defined
+      tags: debug
+```
+
+**Nota:** ho messo `gather_facts: true` per avere `ansible_date_time` disponibile.
+
+---
+
+## 🧪 Test del playbook
+
+Quando lanci il job da ManageIQ, nei log di AWX dovresti vedere:
+```
+TASK [Debug - Show volume_id received from ManageIQ] ***
+ok: [localhost] => {
+    "msg": "Creating backup for volume: fa142b6c-153d-4acf-8408-ee7e5c56eff7"
+}
+
+TASK [Ensure OpenStack volume backup is created] ***
+changed: [localhost]
+
+TASK [Show backup result] ***
+ok: [localhost] => {
+    "backup_result.backup": {
+        "id": "backup-abc-123",
+        "name": "backup-fa142b6c-153d-4acf-8408-ee7e5c56eff7-20250417T1430",
+        "status": "available"
+    }
+}
