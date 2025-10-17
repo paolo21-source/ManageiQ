@@ -22,20 +22,3 @@
         var: backup_result.backup
       when: backup_result.backup is defined
       tags: debug
-
-TASK [Debug - Show volume_id received from ManageIQ] ***
-ok: [localhost] => {
-    "msg": "Creating backup for volume: fa142b6c-153d-4acf-8408-ee7e5c56eff7"
-}
-
-TASK [Ensure OpenStack volume backup is created] ***
-changed: [localhost]
-
-TASK [Show backup result] ***
-ok: [localhost] => {
-    "backup_result.backup": {
-        "id": "backup-abc-123",
-        "name": "backup-fa142b6c-153d-4acf-8408-ee7e5c56eff7-20250417T1430",
-        "status": "available"
-    }
-}
