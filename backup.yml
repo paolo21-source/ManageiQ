@@ -13,7 +13,7 @@
         volume: "{{ volume_id }}"
         state: present
         force: true
-        name: "backup-{{ volume_id }}-{{ ansible_date_time.iso8601_basic_short }}"
+        name: "backup-{{ volume_id }}-{{ '%Y%m%d%H%M' | strftime }}"
       register: backup_result
     
     - name: Show backup result
