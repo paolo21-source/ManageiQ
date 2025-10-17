@@ -2,12 +2,14 @@
 - name: Execute OpenStack Cinder Volume Backup
   hosts: localhost
   connection: local
-  gather_facts: false
+  gather_facts: true  # ← serve per ansible_date_time
   tasks:
-    - name: Debug - Show volume_id received from ManageIQ
-      debug:
-        msg: "Creating backup for volume: {{ volume_id }}"
-    
+    - name: Ensure volume_id is provided
+      assert:
+        that: volume_id is defined and volume_id | length > 0
+        fail_msg: "ERROR: volume_id is missing or empty. Check ManageIQ → AWX integration."
+        success_msg: "Volume ID received: {{ volume_id }}"
+
     - name: Ensure OpenStack volume backup is created
       openstack.cloud.volume_backup:
         volume: "{{ volume_id }}"
@@ -15,7 +17,8 @@
         force: true
         name: "backup-{{ volume_id }}-{{ ansible_date_time.iso8601_basic_short }}"
       register: backup_result
-    
+
     - name: Show backup result
       debug:
         msg: "Backup created successfully: {{ backup_result.backup.name }}"
+      when: backup_result.backup is defined
