@@ -6,6 +6,7 @@
   tasks:
     - name: Ensure OpenStack volume backup is created
       openstack.cloud.volume_backup:
+        cloud: default
         volume: "{{ volume_id }}"  # Usa la variabile passata da AWX
         state: present
         force: true  # <=== FORZA IL BACKUP ANCHE SE IL VOLUME È IN USO
