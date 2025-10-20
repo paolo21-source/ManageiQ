@@ -5,9 +5,9 @@
   gather_facts: false
 
   vars:
-    awx_host: "http://awx-demo-service"  # ← il tuo ngrok URL
-    awx_user: "admin"
-    awx_password: "1234"     
+    awx_host: "https://services.xaaslab.it"  # ← il tuo ngrok URL
+    awx_user: "paolo.astorino"
+    awx_password: "gaxH=5[]zu22"     
     awx_validate_certs: false
 
   tasks:
