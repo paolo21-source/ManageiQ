@@ -5,9 +5,9 @@
   gather_facts: false
   
   vars:
-    awx_host: "http://awx-demo-service"
-    awx_user: "admin"
-    awx_password: "1234"
+    awx_host: "https://services.xaaslab.it"
+    awx_user: "paolo.astorino"
+    awx_password: "gaxH=5[]zu22"
     awx_validate_certs: false
   
   tasks:
@@ -57,7 +57,6 @@
         - "Weekly Backup - {{ volume_name }} ({{ volume_id }})"
         - "Monthly Backup - {{ volume_name }} ({{ volume_id }})"
       ignore_errors: true
-      register: delete_result
     
     - name: Show delete result
       debug:
@@ -89,7 +88,6 @@
           {% elif frequency == 'monthly' %}DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m') }}01T020000 RRULE:FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=1
           {% endif %}
       when: backup_action == "enable"
-      register: create_result
     
     - name: Show success message (enable)
       debug:
