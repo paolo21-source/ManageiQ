@@ -35,7 +35,6 @@
           Porta: {{ listener_port }}
           Protocollo: {{ protocol }}
           Algoritmo: {{ lb_algorithm_default }}
-          Provider: {{ lb_provider | default('auto') }}
           Membri: {{ lb_members | length }} server(s)
     
     # Cleanup opzionale
@@ -47,23 +46,22 @@
         timeout: 300
       ignore_errors: yes
     
-    # Crea Load Balancer
+    # ✅ Crea Load Balancer (SENZA provider!)
     - name: Create Load Balancer
       openstack.cloud.loadbalancer:
         name: "{{ lb_name }}"
         vip_subnet: "{{ lb_vip_subnet }}"
-        provider: "{{ lb_provider | default(omit) }}"
         state: present
         wait: yes
         timeout: 800
       register: lb_created
     
-    # ✅ DEBUG: Mostra la struttura completa
+    # DEBUG: Mostra la struttura completa
     - name: Debug - Show complete LB structure
       debug:
         msg: "LB Created Result: {{ lb_created }}"
     
-    # ✅ Salva VIP in modo SICURO gestendo strutture diverse
+    # Salva VIP in modo SICURO
     - name: Save LB VIP info (safe access)
       set_fact:
         lb_vip_address: "{{ lb_created.loadbalancer.vip_address | default(lb_created.vip_address | default('N/A')) }}"
