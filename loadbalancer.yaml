@@ -1,5 +1,5 @@
 ---
-- name: Create L4 TCP Load Balancer (Dynamic - Pure Ansible Modules)
+- name: Create L4 TCP Load Balancer (Dynamic - Simplified)
   hosts: localhost
   gather_facts: no
   collections:
@@ -37,20 +37,13 @@
           Algoritmo: {{ lb_algorithm_default }}
           Membri: {{ lb_members | length }} server(s)
     
-    # ✅ Opzionale: Cleanup
-    - name: Check if load balancer exists
-      openstack.cloud.loadbalancer_info:
-        name: "{{ lb_name }}"
-      register: existing_lb
-      ignore_errors: yes
-    
-    - name: Delete existing load balancer if found
+    # ✅ Cleanup opzionale - ignora errori se non esiste
+    - name: Ensure no existing load balancer (cleanup)
       openstack.cloud.loadbalancer:
         name: "{{ lb_name }}"
         state: absent
         wait: yes
         timeout: 300
-      when: existing_lb.loadbalancers | length > 0
       ignore_errors: yes
     
     # ✅ Crea Load Balancer
@@ -65,7 +58,14 @@
     
     - name: Log LB creation
       debug:
-        msg: "✅ Load Balancer '{{ lb_name }}' creato!"
+        msg: "✅ Load Balancer '{{ lb_name }}' creato! VIP: {{ lb_created.loadbalancer.vip_address }}"
+    
+    # ✅ Salva VIP address per dopo
+    - name: Save LB VIP info
+      set_fact:
+        lb_vip_address: "{{ lb_created.loadbalancer.vip_address }}"
+        lb_vip_port_id: "{{ lb_created.loadbalancer.vip_port_id }}"
+        lb_id: "{{ lb_created.loadbalancer.id }}"
     
     # ✅ Crea Listener
     - name: Create Listener
@@ -116,19 +116,7 @@
       debug:
         msg: "✅ Aggiunti {{ lb_members | length }} membri al pool"
     
-    # ✅ Ottieni info LB usando modulo Ansible (NO CLI!)
-    - name: Get Load Balancer info
-      openstack.cloud.loadbalancer_info:
-        name: "{{ lb_name }}"
-      register: lb_info_result
-    
-    - name: Set LB facts
-      set_fact:
-        lb_vip_address: "{{ lb_info_result.loadbalancers[0].vip_address }}"
-        lb_vip_port_id: "{{ lb_info_result.loadbalancers[0].vip_port_id }}"
-        lb_id: "{{ lb_info_result.loadbalancers[0].id }}"
-    
-    # ✅ (Opzionale) Gestione Floating IP
+    # ✅ (Opzionale) Gestione Floating IP con moduli Ansible
     - name: Floating IP management
       when: assign_floating_ip | default(false) | bool
       block:
@@ -143,7 +131,6 @@
             floating_ip_address: "{{ fip_created.floating_ip.floating_ip_address }}"
             port: "{{ lb_vip_port_id }}"
             state: present
-          register: fip_attached
         
         - name: Show summary with Floating IP
           debug:
@@ -162,6 +149,7 @@
               ⚖️  Algoritmo: {{ lb_algorithm_default }}
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     
+    # ✅ Summary senza Floating IP
     - name: Show summary without Floating IP
       when: not (assign_floating_ip | default(false) | bool)
       debug:
