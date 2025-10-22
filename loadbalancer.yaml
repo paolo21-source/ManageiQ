@@ -1,5 +1,5 @@
 ---
-- name: Create L4 TCP Load Balancer (Dynamic - Fixed)
+- name: Create L4 TCP Load Balancer with Optional Floating IP
   hosts: localhost
   gather_facts: no
   collections:
@@ -12,6 +12,9 @@
     pool_name: "{{ lb_name }}-pool"
   
   tasks:
+    # ========================================
+    # VALIDAZIONE PARAMETRI
+    # ========================================
     - name: Validate required variables
       assert:
         that:
@@ -36,8 +39,11 @@
           Protocollo: {{ protocol }}
           Algoritmo: {{ lb_algorithm_default }}
           Membri: {{ lb_members | length }} server(s)
+          Floating IP: {{ floating_ip_id | default('Nessuno (LB interno)') }}
     
-    # Cleanup opzionale
+    # ========================================
+    # CLEANUP OPZIONALE
+    # ========================================
     - name: Ensure no existing load balancer (cleanup)
       openstack.cloud.loadbalancer:
         name: "{{ lb_name }}"
@@ -46,7 +52,9 @@
         timeout: 300
       ignore_errors: yes
     
-    # ✅ Crea Load Balancer (SENZA provider!)
+    # ========================================
+    # CREAZIONE LOAD BALANCER
+    # ========================================
     - name: Create Load Balancer
       openstack.cloud.loadbalancer:
         name: "{{ lb_name }}"
@@ -56,12 +64,11 @@
         timeout: 800
       register: lb_created
     
-    # DEBUG: Mostra la struttura completa
     - name: Debug - Show complete LB structure
       debug:
         msg: "LB Created Result: {{ lb_created }}"
+      when: ansible_verbosity >= 2
     
-    # Salva VIP in modo SICURO
     - name: Save LB VIP info (safe access)
       set_fact:
         lb_vip_address: "{{ lb_created.loadbalancer.vip_address | default(lb_created.vip_address | default('N/A')) }}"
@@ -72,7 +79,9 @@
       debug:
         msg: "✅ Load Balancer '{{ lb_name }}' creato! VIP: {{ lb_vip_address }}"
     
-    # Crea Listener
+    # ========================================
+    # CREAZIONE LISTENER
+    # ========================================
     - name: Create Listener
       openstack.cloud.lb_listener:
         load_balancer: "{{ lb_name }}"
@@ -88,7 +97,9 @@
       debug:
         msg: "✅ Listener '{{ listener_name }}' creato sulla porta {{ listener_port }}"
     
-    # Crea Pool
+    # ========================================
+    # CREAZIONE POOL
+    # ========================================
     - name: Create Pool
       openstack.cloud.lb_pool:
         listener: "{{ listener_name }}"
@@ -104,7 +115,9 @@
       debug:
         msg: "✅ Pool '{{ pool_name }}' creato con algoritmo {{ lb_algorithm_default }}"
     
-    # Aggiungi membri
+    # ========================================
+    # AGGIUNTA MEMBRI
+    # ========================================
     - name: Add members to pool
       openstack.cloud.lb_member:
         pool: "{{ pool_name }}"
@@ -121,57 +134,95 @@
       debug:
         msg: "✅ Aggiunti {{ lb_members | length }} membri al pool"
     
-    # Gestione Floating IP (opzionale)
-    - name: Floating IP management
+    # ========================================
+    # 🆕 GESTIONE FLOATING IP (DA DROPDOWN)
+    # ========================================
+    - name: Assign existing Floating IP (if selected)
       when: 
-        - assign_floating_ip | default(false) | bool
+        - floating_ip_id is defined
+        - floating_ip_id != ''
+        - floating_ip_id != 'none'
         - lb_vip_port_id is defined
         - lb_vip_port_id != 'N/A'
       block:
-        - name: Create Floating IP
-          openstack.cloud.floating_ip:
-            network: "{{ floating_ip_network | default('external_pub_vlan20') }}"
-            state: present
-          register: fip_created
+        - name: Get Floating IP details
+          ansible.builtin.command:
+            cmd: >
+              openstack floating ip show {{ floating_ip_id }}
+              -f json
+          register: fip_info_raw
+          changed_when: false
+          
+        - name: Parse Floating IP info
+          set_fact:
+            fip_info: "{{ fip_info_raw.stdout | from_json }}"
+            
+        - name: Extract Floating IP address
+          set_fact:
+            floating_ip_address: "{{ fip_info.floating_ip_address }}"
         
-        - name: Attach Floating IP to LB VIP port
-          openstack.cloud.floating_ip:
-            floating_ip_address: "{{ fip_created.floating_ip.floating_ip_address }}"
-            port: "{{ lb_vip_port_id }}"
-            state: present
-          register: fip_attached
+        - name: Check if Floating IP is already assigned
+          set_fact:
+            fip_already_assigned: "{{ fip_info.port_id is not none and fip_info.port_id != null and fip_info.port_id | length > 0 }}"
         
-        - name: Show summary with Floating IP
+        - name: Fail if Floating IP already in use
+          fail:
+            msg: "❌ Floating IP {{ floating_ip_address }} è già assegnato a un'altra risorsa (port: {{ fip_info.port_id }})"
+          when: fip_already_assigned | bool
+        
+        - name: Associate Floating IP to LB VIP port
+          ansible.builtin.command:
+            cmd: >
+              openstack floating ip set
+              --port {{ lb_vip_port_id }}
+              {{ floating_ip_id }}
+          register: fip_assigned
+          changed_when: true
+          
+        - name: Log Floating IP assignment
           debug:
-            msg: |
-              ✅✅✅ LOAD BALANCER COMPLETATO ✅✅✅
-              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              📛 Nome: {{ lb_name }}
-              🆔 ID: {{ lb_id }}
-              🔒 VIP Interno: {{ lb_vip_address }}
-              🌐 Floating IP: {{ fip_created.floating_ip.floating_ip_address }}
-              🚪 Porta: {{ listener_port }}
-              🖥️  Backend Servers:
-              {% for member in lb_members %}
-                  - {{ member.address }}:{{ member.protocol_port }}
-              {% endfor %}
-              ⚖️  Algoritmo: {{ lb_algorithm_default }}
-              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            msg: "✅ Floating IP {{ floating_ip_address }} assegnato al Load Balancer {{ lb_name }}"
+        
+        - name: Set FIP flag for summary
+          set_fact:
+            has_floating_ip: true
+            lb_floating_ip: "{{ floating_ip_address }}"
     
-    # Summary senza Floating IP
-    - name: Show summary without Floating IP
-      when: not (assign_floating_ip | default(false) | bool)
+    # Set flag se nessun Floating IP
+    - name: No Floating IP assigned
+      when: floating_ip_id is not defined or floating_ip_id == '' or floating_ip_id == 'none'
+      set_fact:
+        has_floating_ip: false
+        lb_floating_ip: "N/A"
+    
+    # ========================================
+    # SUMMARY FINALE
+    # ========================================
+    - name: Show Load Balancer summary
       debug:
         msg: |
+          
           ✅✅✅ LOAD BALANCER COMPLETATO ✅✅✅
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           📛 Nome: {{ lb_name }}
           🆔 ID: {{ lb_id }}
           🔒 VIP Interno: {{ lb_vip_address }}
+          {% if has_floating_ip | default(false) %}
+          🌐 Floating IP: {{ lb_floating_ip }} ⭐ PUBBLICO
+          {% else %}
+          🔐 Floating IP: Nessuno (Load Balancer interno)
+          {% endif %}
           🚪 Porta: {{ listener_port }}
+          📡 Protocollo: {{ protocol }}
           🖥️  Backend Servers:
           {% for member in lb_members %}
               - {{ member.address }}:{{ member.protocol_port }}
           {% endfor %}
           ⚖️  Algoritmo: {{ lb_algorithm_default }}
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          {% if has_floating_ip | default(false) %}
+          🌐 Il tuo Load Balancer è accessibile su: {{ lb_floating_ip }}:{{ listener_port }}
+          {% else %}
+          🔒 Il tuo Load Balancer è accessibile solo dalla rete interna: {{ lb_vip_address }}:{{ listener_port }}
+          {% endif %}
