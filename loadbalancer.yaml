@@ -1,14 +1,11 @@
 ---
-- name: Create L4 TCP Load Balancer (Dynamic)
+- name: Create L4 TCP Load Balancer (Dynamic - Pure Ansible Modules)
   hosts: localhost
   gather_facts: no
   collections:
     - openstack.cloud
   
   vars:
-    # ❌ RIMUOVI cloud_name
-    # cloud_name: openstack
-    
     protocol: "{{ protocol | default('TCP') }}"
     lb_algorithm_default: "{{ lb_algorithm | default('ROUND_ROBIN') }}"
     listener_name: "{{ lb_name }}-listener"
@@ -26,28 +23,39 @@
           - listener_port | int < 65536
           - lb_members is defined
           - lb_members | length > 0
-        fail_msg: |
-          ❌ Variabili richieste mancanti o non valide!
+        fail_msg: "❌ Variabili richieste mancanti!"
     
     - name: Log configuration
       debug:
         msg: |
           📋 Configurazione Load Balancer:
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━
           Nome: {{ lb_name }}
           Subnet VIP: {{ lb_vip_subnet }}
           Porta: {{ listener_port }}
-          Membri: {{ lb_members | length }}
+          Protocollo: {{ protocol }}
+          Algoritmo: {{ lb_algorithm_default }}
+          Membri: {{ lb_members | length }} server(s)
     
-    - name: Ensure no existing load balancer (cleanup)
-      openstack.cloud.loadbalancer:
-        # ❌ NON specificare cloud: "{{ cloud_name }}"
+    # ✅ Opzionale: Cleanup
+    - name: Check if load balancer exists
+      openstack.cloud.loadbalancer_info:
         name: "{{ lb_name }}"
-        state: absent
+      register: existing_lb
       ignore_errors: yes
     
+    - name: Delete existing load balancer if found
+      openstack.cloud.loadbalancer:
+        name: "{{ lb_name }}"
+        state: absent
+        wait: yes
+        timeout: 300
+      when: existing_lb.loadbalancers | length > 0
+      ignore_errors: yes
+    
+    # ✅ Crea Load Balancer
     - name: Create Load Balancer
       openstack.cloud.loadbalancer:
-        # ❌ NON specificare cloud
         name: "{{ lb_name }}"
         vip_subnet: "{{ lb_vip_subnet }}"
         state: present
@@ -55,9 +63,13 @@
         timeout: 800
       register: lb_created
     
-    - name: Create TCP Listener
+    - name: Log LB creation
+      debug:
+        msg: "✅ Load Balancer '{{ lb_name }}' creato!"
+    
+    # ✅ Crea Listener
+    - name: Create Listener
       openstack.cloud.lb_listener:
-        # ❌ NON specificare cloud
         load_balancer: "{{ lb_name }}"
         name: "{{ listener_name }}"
         protocol: "{{ protocol | upper }}"
@@ -65,10 +77,15 @@
         state: present
         wait: yes
         timeout: 120
+      register: listener_created
     
-    - name: Create TCP Pool
+    - name: Log Listener creation
+      debug:
+        msg: "✅ Listener '{{ listener_name }}' creato sulla porta {{ listener_port }}"
+    
+    # ✅ Crea Pool
+    - name: Create Pool
       openstack.cloud.lb_pool:
-        # ❌ NON specificare cloud
         listener: "{{ listener_name }}"
         name: "{{ pool_name }}"
         protocol: "{{ protocol | upper }}"
@@ -76,33 +93,88 @@
         state: present
         wait: yes
         timeout: 120
+      register: pool_created
     
+    - name: Log Pool creation
+      debug:
+        msg: "✅ Pool '{{ pool_name }}' creato con algoritmo {{ lb_algorithm_default }}"
+    
+    # ✅ Aggiungi membri
     - name: Add members to pool
       openstack.cloud.lb_member:
-        # ❌ NON specificare cloud
         pool: "{{ pool_name }}"
         name: "member-{{ item.address }}-{{ item.protocol_port }}"
         address: "{{ item.address }}"
         protocol_port: "{{ item.protocol_port | int }}"
         subnet_id: "{{ lb_vip_subnet }}"
         state: present
+        wait: yes
       loop: "{{ lb_members }}"
+      register: members_added
     
-    - name: Get Load Balancer info (con CLI)
-      command: >
-        openstack loadbalancer show {{ lb_name }} -f json
-      register: lb_info_json
-      changed_when: false
-      # Per la CLI serve specificare --os-cloud o usare env vars
+    - name: Log members added
+      debug:
+        msg: "✅ Aggiunti {{ lb_members | length }} membri al pool"
     
-    - set_fact:
-        lb_info: "{{ lb_info_json.stdout | from_json }}"
+    # ✅ Ottieni info LB usando modulo Ansible (NO CLI!)
+    - name: Get Load Balancer info
+      openstack.cloud.loadbalancer_info:
+        name: "{{ lb_name }}"
+      register: lb_info_result
     
-    - name: Show final summary
+    - name: Set LB facts
+      set_fact:
+        lb_vip_address: "{{ lb_info_result.loadbalancers[0].vip_address }}"
+        lb_vip_port_id: "{{ lb_info_result.loadbalancers[0].vip_port_id }}"
+        lb_id: "{{ lb_info_result.loadbalancers[0].id }}"
+    
+    # ✅ (Opzionale) Gestione Floating IP
+    - name: Floating IP management
+      when: assign_floating_ip | default(false) | bool
+      block:
+        - name: Create Floating IP
+          openstack.cloud.floating_ip:
+            network: "{{ floating_ip_network | default('external_pub_vlan20') }}"
+            state: present
+          register: fip_created
+        
+        - name: Attach Floating IP to LB VIP port
+          openstack.cloud.floating_ip:
+            floating_ip_address: "{{ fip_created.floating_ip.floating_ip_address }}"
+            port: "{{ lb_vip_port_id }}"
+            state: present
+          register: fip_attached
+        
+        - name: Show summary with Floating IP
+          debug:
+            msg: |
+              ✅✅✅ LOAD BALANCER CREATO CON SUCCESSO ✅✅✅
+              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+              📛 Nome: {{ lb_name }}
+              🆔 ID: {{ lb_id }}
+              🔒 VIP Interno: {{ lb_vip_address }}
+              🌐 Floating IP Pubblico: {{ fip_created.floating_ip.floating_ip_address }}
+              🚪 Porta: {{ listener_port }}
+              🖥️  Backend Servers:
+              {% for member in lb_members %}
+                  - {{ member.address }}:{{ member.protocol_port }}
+              {% endfor %}
+              ⚖️  Algoritmo: {{ lb_algorithm_default }}
+              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+    - name: Show summary without Floating IP
+      when: not (assign_floating_ip | default(false) | bool)
       debug:
         msg: |
-          ✅✅✅ Load Balancer COMPLETATO ✅✅✅
+          ✅✅✅ LOAD BALANCER CREATO CON SUCCESSO ✅✅✅
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           📛 Nome: {{ lb_name }}
-          🔒 VIP: {{ lb_info.vip_address }}
+          🆔 ID: {{ lb_id }}
+          🔒 VIP Interno: {{ lb_vip_address }}
           🚪 Porta: {{ listener_port }}
-          🖥️  Backend: {{ lb_members | map(attribute='address') | list }}
+          🖥️  Backend Servers:
+          {% for member in lb_members %}
+              - {{ member.address }}:{{ member.protocol_port }}
+          {% endfor %}
+          ⚖️  Algoritmo: {{ lb_algorithm_default }}
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
