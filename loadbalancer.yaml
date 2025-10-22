@@ -6,8 +6,6 @@
     - openstack.cloud
   
   vars:
-    # ✅ Valori FISSI (non cambiano mai)
-    cloud_name: openstack
     
     # ✅ Valori OPZIONALI con default (se non arrivano da ManageIQ)
     protocol: "{{ protocol | default('TCP') }}"
