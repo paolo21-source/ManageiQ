@@ -1,0 +1,198 @@
+---
+- name: Create L4 TCP Load Balancer (Dynamic)
+  hosts: localhost
+  gather_facts: no
+  collections:
+    - openstack.cloud
+  
+  vars:
+    # ✅ Valori FISSI (non cambiano mai)
+    cloud_name: openstack
+    
+    # ✅ Valori OPZIONALI con default (se non arrivano da ManageIQ)
+    protocol: "{{ protocol | default('TCP') }}"
+    lb_algorithm_default: "{{ lb_algorithm | default('ROUND_ROBIN') }}"
+    
+    # 🤖 Valori GENERATI automaticamente da altre variabili
+    listener_name: "{{ lb_name }}-listener"
+    pool_name: "{{ lb_name }}-pool"
+    
+    # ❌ RIMUOVI QUESTI (devono arrivare da extra_vars):
+    # lb_name: awx-test-lb-l4-corretto
+    # lb_vip_subnet: "d126b00a-..."
+    # listener_port: 8080
+    # lb_members: [...]
+  
+  tasks:
+    # ✅ STEP 1: Valida che le variabili obbligatorie siano presenti
+    - name: Validate required variables
+      assert:
+        that:
+          - lb_name is defined
+          - lb_name | length > 0
+          - lb_vip_subnet is defined
+          - listener_port is defined
+          - listener_port | int > 0
+          - listener_port | int < 65536
+          - lb_members is defined
+          - lb_members | length > 0
+        fail_msg: |
+          ❌ Variabili richieste mancanti o non valide!
+          Richieste:
+            - lb_name (stringa non vuota)
+            - lb_vip_subnet (UUID subnet)
+            - listener_port (numero 1-65535)
+            - lb_members (lista con almeno 1 elemento)
+    
+    # ✅ STEP 2: Log della configurazione ricevuta
+    - name: Log configuration
+      debug:
+        msg: |
+          📋 Configurazione Load Balancer:
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          Nome: {{ lb_name }}
+          Subnet VIP: {{ lb_vip_subnet }}
+          Protocollo: {{ protocol }}
+          Porta Listener: {{ listener_port }}
+          Algoritmo: {{ lb_algorithm_default }}
+          Membri Backend: {{ lb_members | length }} server(s)
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+    # ✅ STEP 3: Cleanup (opzionale, rimuovi se non serve)
+    - name: Ensure no existing load balancer (cleanup)
+      openstack.cloud.loadbalancer:
+        cloud: "{{ cloud_name }}"
+        name: "{{ lb_name }}"
+        state: absent
+      ignore_errors: yes
+    
+    # ✅ STEP 4: Crea Load Balancer
+    - name: Create Load Balancer
+      openstack.cloud.loadbalancer:
+        cloud: "{{ cloud_name }}"
+        name: "{{ lb_name }}"
+        vip_subnet: "{{ lb_vip_subnet }}"
+        state: present
+        wait: yes
+        timeout: 800
+      register: lb_created
+    
+    - name: Log LB creation result
+      debug:
+        msg: "✅ Load Balancer creato: {{ lb_created }}"
+    
+    # ✅ STEP 5: Crea Listener
+    - name: Create TCP Listener
+      openstack.cloud.lb_listener:
+        cloud: "{{ cloud_name }}"
+        load_balancer: "{{ lb_name }}"
+        name: "{{ listener_name }}"
+        protocol: "{{ protocol | upper }}"
+        protocol_port: "{{ listener_port | int }}"
+        state: present
+        wait: yes
+        timeout: 120
+      register: listener_created
+    
+    - name: Log Listener creation result
+      debug:
+        msg: "✅ Listener creato: {{ listener_name }} sulla porta {{ listener_port }}"
+    
+    # ✅ STEP 6: Crea Pool
+    - name: Create TCP Pool
+      openstack.cloud.lb_pool:
+        cloud: "{{ cloud_name }}"
+        listener: "{{ listener_name }}"
+        name: "{{ pool_name }}"
+        protocol: "{{ protocol | upper }}"
+        lb_algorithm: "{{ lb_algorithm_default }}"
+        state: present
+        wait: yes
+        timeout: 120
+      register: pool_created
+    
+    - name: Log Pool creation result
+      debug:
+        msg: "✅ Pool creato: {{ pool_name }} con algoritmo {{ lb_algorithm_default }}"
+    
+    # ✅ STEP 7: Aggiungi membri al pool
+    - name: Add members to pool
+      openstack.cloud.lb_member:
+        cloud: "{{ cloud_name }}"
+        pool: "{{ pool_name }}"
+        name: "member-{{ item.address }}-{{ item.protocol_port }}"
+        address: "{{ item.address }}"
+        protocol_port: "{{ item.protocol_port | int }}"
+        subnet_id: "{{ lb_vip_subnet }}"
+        state: present
+      loop: "{{ lb_members }}"
+      register: members_added
+    
+    - name: Log members added
+      debug:
+        msg: "✅ Membri aggiunti al pool: {{ lb_members | map(attribute='address') | list }}"
+    
+    # ✅ STEP 8: Ottieni informazioni sul VIP
+    - name: Get Load Balancer info
+      command: >
+        openstack --os-cloud {{ cloud_name }}
+        loadbalancer show {{ lb_name }}
+        -f json
+      register: lb_info_json
+      changed_when: false
+    
+    - set_fact:
+        lb_info: "{{ lb_info_json.stdout | from_json }}"
+    
+    # ✅ STEP 9: (Opzionale) Assegna Floating IP
+    - name: Floating IP management
+      when: assign_floating_ip | default(false) | bool
+      block:
+        - name: Allocate Floating IP
+          command: >
+            openstack --os-cloud {{ cloud_name }}
+            floating ip create {{ floating_ip_network | default('external_pub_vlan20') }}
+            -f value -c id
+          register: fip_id
+          changed_when: true
+        
+        - name: Associate Floating IP to LB VIP port
+          command: >
+            openstack --os-cloud {{ cloud_name }}
+            floating ip set --port {{ lb_info.vip_port_id }}
+            {{ fip_id.stdout }}
+          changed_when: true
+        
+        - name: Get Floating IP address
+          command: >
+            openstack --os-cloud {{ cloud_name }}
+            floating ip show {{ fip_id.stdout }}
+            -f value -c floating_ip_address
+          register: fip_public_ip
+          changed_when: false
+        
+        - name: Show final summary with Floating IP
+          debug:
+            msg: |
+              ✅✅✅ Load Balancer COMPLETATO ✅✅✅
+              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+              📛 Nome: {{ lb_name }}
+              🔒 VIP Interno: {{ lb_info.vip_address }}
+              🌐 Floating IP Pubblico: {{ fip_public_ip.stdout }}
+              🚪 Porta: {{ listener_port }}
+              🖥️  Backend Servers: {{ lb_members | map(attribute='address') | list }}
+              ⚖️  Algoritmo: {{ lb_algorithm_default }}
+              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+    - name: Show final summary without Floating IP
+      when: not (assign_floating_ip | default(false) | bool)
+      debug:
+        msg: |
+          ✅✅✅ Load Balancer COMPLETATO ✅✅✅
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          📛 Nome: {{ lb_name }}
+          🔒 VIP Interno: {{ lb_info.vip_address }}
+          🚪 Porta: {{ listener_port }}
+          🖥️  Backend Servers: {{ lb_members | map(attribute='address') | list }}
+          ⚖️  Algoritmo: {{ lb_algorithm_default }}
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
