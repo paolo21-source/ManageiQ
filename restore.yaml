@@ -1,0 +1,34 @@
+---
+- name: Restore OpenStack Cinder Volume from Backup
+  hosts: localhost
+  gather_facts: false
+
+  collections:
+    - openstack.cloud
+
+  tasks:
+    - name: Check if backup exists
+      openstack.cloud.volume_backup_info:
+        name: "{{ backup_id }}"
+      register: backup_info
+      delegate_to: localhost
+
+    - name: Restore volume from backup using OpenStack CLI
+      ansible.builtin.shell: |
+        openstack --os-auth-url "https://dashboard.xaaslab.it:5000" \
+                  --os-username "sourcesense" \
+                  --os-password "Sb8*lW05yD4E}n." \
+                  --os-project-name "awx_test" \
+                  --os-user-domain-name "default" \
+                  --os-project-domain-name "default" \
+                  --os-region-name "Milano" \
+                  --os-identity-api-version 3 \
+                  volume backup restore {{ backup_id }} {{ volume_id }} --force
+      register: restore_result
+      delegate_to: localhost
+      
+
+    - name: Display restore result
+      ansible.builtin.debug:
+        msg: "Restore initiated successfully"
+      when: restore_result.rc == 0
