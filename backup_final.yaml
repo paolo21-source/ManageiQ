@@ -1,6 +1,6 @@
 ---
 # ============================================
-# Cinder Volume Backup - VERSIONE FINALE
+# Cinder Volume Backup - VERSIONE FINALE CORRETTA
 # Usa solo moduli Ansible (no shell commands)
 # ============================================
 
@@ -36,19 +36,23 @@
     # 3. RECUPERA NOME VOLUME DA OPENSTACK
     # =============================================
     
-    - name: Get volume info from OpenStack
+    - name: Get all volumes from OpenStack
       openstack.cloud.volume_info:
-        name: "{{ volume_id }}"
-      register: volume_info
+        details: true
+      register: all_volumes
+    
+    - name: Find volume by ID
+      set_fact:
+        volume_data: "{{ all_volumes.volumes | selectattr('id', 'equalto', volume_id) | first | default(None) }}"
     
     - name: Check if volume exists
       fail:
-        msg: "Volume {{ volume_id }} not found"
-      when: volume_info.volumes | length == 0
+        msg: "Volume {{ volume_id }} not found in OpenStack"
+      when: volume_data is none
     
     - name: Set volume name
       set_fact:
-        volume_name: "{{ volume_info.volumes[0].name }}"
+        volume_name: "{{ volume_data.name }}"
     
     # =============================================
     # 4. GENERA NOME BACKUP
