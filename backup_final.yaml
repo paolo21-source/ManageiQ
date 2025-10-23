@@ -1,13 +1,20 @@
 ---
 # ============================================
-# Cinder Volume Backup - VERSIONE SEMPLIFICATA
-# Solo volume_id (required) e tenant_name (optional)
+# Cinder Volume Backup - AGGIORNATO
+# Con tenant, naming convention e retention 15gg
 # ============================================
 
 - name: Execute OpenStack Cinder Volume Backup
   hosts: localhost
   connection: local
-  gather_facts: true
+  gather_facts: true  # serve per ansible_date_time
+  
+  # Variabili passate da ManageIQ o dallo schedule:
+  # - volume_id (required)
+  # - volume_name (optional)
+  # - tenant_name (optional)
+  # - tenant_id (optional)
+  # - retention_days (optional, default 15)
   
   tasks:
     # =============================================
@@ -17,104 +24,93 @@
     - name: Ensure volume_id is provided
       assert:
         that: volume_id is defined and volume_id | length > 0
-        fail_msg: "ERROR: volume_id is missing or empty"
+        fail_msg: "ERROR: volume_id is missing or empty. Check ManageIQ → AWX integration."
         success_msg: "Volume ID received: {{ volume_id }}"
     
     # =============================================
     # 2. IMPOSTA VALORI DI DEFAULT
     # =============================================
     
-    - name: Set default retention
+    - name: Set default values for optional variables
       set_fact:
+        volume_name: "{{ volume_name | default('unknown') }}"
+        tenant_name: "{{ tenant_name | default('default') }}"
+        tenant_id: "{{ tenant_id | default('unknown') }}"
         retention_days: "{{ retention_days | default(15) }}"
     
     # =============================================
-    # 3. RECUPERA INFO VOLUME DA OPENSTACK
-    # Include project_id (tenant)
+    # 3. RECUPERA INFO VOLUME (se non passato)
     # =============================================
     
     - name: Get volume info from OpenStack
       openstack.cloud.volume_info:
         name: "{{ volume_id }}"
       register: volume_info
-    
-    - name: Check if volume exists
-      fail:
-        msg: "Volume {{ volume_id }} not found in OpenStack"
-      when:
-        - volume_info.volumes is not defined or volume_info.volumes | length == 0
-    
-    - name: Set volume data
-      set_fact:
-        volume_data: "{{ volume_info.volumes[0] }}"
-    
-    - name: Set volume name
-      set_fact:
-        volume_name: "{{ volume_data.name }}"
-    
-    - name: Debug volume_data to find project_id field
-      debug:
-        var: volume_data
-    
-    - name: Set volume project_id (tenant) - try multiple fields
-      set_fact:
-        volume_project_id: "{{ volume_data['os-vol-tenant-attr:tenant_id'] | default(volume_data.metadata.project_id | default(lookup('env', 'OS_PROJECT_ID') | default('unknown'))) }}"
-    
-    - name: Display volume info
-      debug:
-        msg:
-          - "Volume name: {{ volume_name }}"
-          - "Volume project_id: {{ volume_project_id }}"
-    
-    # =============================================
-    # 4. RECUPERA TENANT NAME DA PROJECT_ID
-    # =============================================
-    
-    - name: Get project/tenant info from OpenStack
-      openstack.cloud.project_info:
-        name: "{{ volume_project_id }}"
-      register: project_info
-      when: volume_project_id != 'unknown'
+      when: volume_name == 'unknown'
       ignore_errors: true
     
-    - name: Set tenant name from project info
+    - name: Set volume name from OpenStack
       set_fact:
-        tenant_name: "{{ project_info.projects[0].name }}"
+        volume_name: "{{ volume_info.volumes[0].name }}"
       when:
-        - project_info is defined
-        - project_info.projects is defined
-        - project_info.projects | length > 0
+        - volume_name == 'unknown'
+        - volume_info is defined
+        - volume_info.volumes is defined
+        - volume_info.volumes | length > 0
     
-    - name: Fallback - try to get tenant from environment
+    - name: Set fallback volume name
       set_fact:
-        tenant_name: "{{ lookup('env', 'OS_PROJECT_NAME') }}"
-      when: 
-        - tenant_name is not defined
-        - lookup('env', 'OS_PROJECT_NAME') | length > 0
-    
-    - name: Final fallback - use volume project_id as tenant name
-      set_fact:
-        tenant_name: "{{ volume_project_id }}"
-      when: tenant_name is not defined
-    
-    - name: Display tenant info
-      debug:
-        msg: "Tenant resolved: {{ tenant_name }}"
+        volume_name: "volume-{{ volume_id[:8] }}"
+      when: volume_name == 'unknown'
     
     # =============================================
-    # 5. GENERA NOME BACKUP
+    # 4. RECUPERA TENANT (FIX 1)
+    # =============================================
+    
+    - name: Get tenant from OpenStack environment
+      shell: echo $OS_PROJECT_NAME
+      register: os_project_output
+      changed_when: false
+      when: tenant_name == 'default'
+    
+    - name: Update tenant name
+      set_fact:
+        tenant_name: "{{ os_project_output.stdout }}"
+      when:
+        - tenant_name == 'default'
+        - os_project_output is defined
+        - os_project_output.stdout is defined
+        - os_project_output.stdout | length > 0
+    
+    - name: Get tenant ID
+      shell: openstack project show {{ tenant_name }} -f value -c id 2>/dev/null || echo "{{ tenant_name }}"
+      register: tenant_id_output
+      changed_when: false
+      when: tenant_id == 'unknown'
+    
+    - name: Update tenant ID
+      set_fact:
+        tenant_id: "{{ tenant_id_output.stdout }}"
+      when:
+        - tenant_id == 'unknown'
+        - tenant_id_output is defined
+        - tenant_id_output.stdout is defined
+        - tenant_id_output.stdout | length > 0
+    
+    # =============================================
+    # 5. GENERA NOME BACKUP (FIX 2)
     # Format: anno_mese_giorno_backup_volumename_tenantname
     # =============================================
     
-    - name: Clean volume name (remove special characters)
+    - name: Clean volume name
       set_fact:
         clean_volume_name: "{{ volume_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
     
-    - name: Clean tenant name (remove special characters)
+    - name: Clean tenant name
       set_fact:
         clean_tenant_name: "{{ tenant_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
     
-    - name: Generate backup name
+    - name: Generate backup name with naming convention
       set_fact:
         backup_name: "{{ ansible_date_time.year }}_{{ '%02d' | format(ansible_date_time.month | int) }}_{{ '%02d' | format(ansible_date_time.day | int) }}_backup_{{ clean_volume_name }}_{{ clean_tenant_name }}"
     
@@ -126,7 +122,7 @@
           - "=============================================="
           - "Volume ID: {{ volume_id }}"
           - "Volume Name: {{ volume_name }}"
-          - "Tenant: {{ tenant_name }}"
+          - "Tenant: {{ tenant_name }} ({{ tenant_id }})"
           - "Backup Name: {{ backup_name }}"
           - "Retention: {{ retention_days }} giorni"
           - "=============================================="
@@ -135,7 +131,7 @@
     # 6. CREA BACKUP
     # =============================================
     
-    - name: Create OpenStack volume backup
+    - name: Ensure OpenStack volume backup is created
       openstack.cloud.volume_backup:
         volume: "{{ volume_id }}"
         state: present
@@ -154,47 +150,56 @@
       when: backup_result.backup is defined
     
     # =============================================
-    # 7. APPLICA RETENTION POLICY (15gg)
+    # 7. APPLICA RETENTION POLICY (FIX 4)
+    # Elimina backup più vecchi di 15 giorni
     # =============================================
     
     - name: Get all backups for this volume
-      openstack.cloud.volume_backup_info:
-        volume: "{{ volume_id }}"
-      register: all_backups_info
-      ignore_errors: true
+      shell: |
+        openstack volume backup list --volume {{ volume_id }} -f json
+      register: all_backups_raw
+      changed_when: false
+      failed_when: false
     
-    - name: Set backups list
+    - name: Parse backup list
       set_fact:
-        all_backups: "{{ all_backups_info.backups | default([]) }}"
-      when: all_backups_info is defined
+        all_backups: "{{ all_backups_raw.stdout | from_json }}"
+      when:
+        - all_backups_raw.stdout is defined
+        - all_backups_raw.stdout | length > 2
     
-    - name: Calculate retention date (Python)
-      set_fact:
-        retention_date: "{{ '%Y-%m-%d' | strftime((ansible_date_time.epoch | int) - (retention_days | int * 86400)) }}"
+    - name: Calculate retention date
+      shell: date -d "{{ retention_days }} days ago" +%Y-%m-%d
+      register: retention_date_output
+      changed_when: false
+      when: all_backups is defined
     
     - name: Find old backups to delete
       set_fact:
-        old_backups: "{{ all_backups | selectattr('created_at', 'defined') | selectattr('created_at', 'lt', retention_date) | list }}"
-      when: all_backups | length > 0
+        old_backups: "{{ all_backups | selectattr('Created At', 'defined') | selectattr('Created At', 'lt', retention_date_output.stdout) | list }}"
+      when:
+        - all_backups is defined
+        - retention_date_output is defined
+        - all_backups | length > 0
     
     - name: Display retention info
       debug:
         msg:
           - "Retention: {{ retention_days }} giorni"
-          - "Cutoff date: {{ retention_date }}"
-          - "Total backups: {{ all_backups | length }}"
+          - "Cutoff date: {{ retention_date_output.stdout | default('N/A') }}"
+          - "Total backups: {{ all_backups | default([]) | length }}"
           - "Backups to delete: {{ old_backups | default([]) | length }}"
+      when: all_backups is defined
     
     - name: Delete old backups
-      openstack.cloud.volume_backup:
-        name: "{{ item.id }}"
-        state: absent
+      shell: |
+        openstack volume backup delete {{ item.ID }}
       loop: "{{ old_backups }}"
       when:
         - old_backups is defined
         - old_backups | length > 0
       register: delete_results
-      ignore_errors: true
+      failed_when: false
     
     - name: Show cleanup result
       debug:
@@ -216,7 +221,7 @@
           - "Backup Name: {{ backup_name }}"
           - "Backup ID: {{ backup_result.backup.id | default('N/A') }}"
           - "Volume: {{ volume_name }} ({{ volume_id }})"
-          - "Tenant: {{ tenant_name }}"
+          - "Tenant: {{ tenant_name }} ({{ tenant_id }})"
           - "Retention: {{ retention_days }} giorni"
           - "Old backups deleted: {{ old_backups | default([]) | length }}"
           - "=============================================="
