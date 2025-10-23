@@ -34,14 +34,16 @@
     # =============================================
     
     - name: Get volume info from OpenStack
-      shell: |
-        openstack volume show {{ volume_id }} -f json
-      register: volume_info_raw
-      changed_when: false
+      openstack.cloud.volume_info:
+        name: "{{ volume_id }}"
+      register: volume_info
     
-    - name: Parse volume info
+    - name: Set volume data
       set_fact:
-        volume_data: "{{ volume_info_raw.stdout | from_json }}"
+        volume_data: "{{ volume_info.volumes[0] }}"
+      when:
+        - volume_info.volumes is defined
+        - volume_info.volumes | length > 0
     
     - name: Set volume name
       set_fact:
@@ -49,7 +51,7 @@
     
     - name: Set volume project_id (tenant)
       set_fact:
-        volume_project_id: "{{ volume_data.os-vol-tenant-attr:tenant_id | default(volume_data.project_id | default('unknown')) }}"
+        volume_project_id: "{{ volume_data.os-vol-tenant-attr:tenant_id | default(volume_data.attachments[0].project_id | default('unknown')) }}"
     
     - name: Display volume info
       debug:
@@ -61,21 +63,31 @@
     # 4. RECUPERA TENANT NAME DA PROJECT_ID
     # =============================================
     
-    - name: Get tenant name from project_id
-      shell: |
-        openstack project show {{ volume_project_id }} -f value -c name 2>/dev/null || echo "unknown"
-      register: tenant_name_output
-      changed_when: false
+    - name: Get project/tenant info from OpenStack
+      openstack.cloud.project_info:
+        name: "{{ volume_project_id }}"
+      register: project_info
       when: volume_project_id != 'unknown'
+      ignore_errors: true
     
-    - name: Set tenant name
+    - name: Set tenant name from project info
       set_fact:
-        tenant_name: "{{ tenant_name | default(tenant_name_output.stdout | default('default')) }}"
-      when: tenant_name_output is defined
+        tenant_name: "{{ project_info.projects[0].name }}"
+      when:
+        - project_info is defined
+        - project_info.projects is defined
+        - project_info.projects | length > 0
     
-    - name: Set fallback tenant name
+    - name: Fallback - try to get tenant from environment
       set_fact:
-        tenant_name: "{{ tenant_name | default('default') }}"
+        tenant_name: "{{ lookup('env', 'OS_PROJECT_NAME') }}"
+      when: 
+        - tenant_name is not defined
+        - lookup('env', 'OS_PROJECT_NAME') | length > 0
+    
+    - name: Final fallback - use volume project_id as tenant name
+      set_fact:
+        tenant_name: "{{ volume_project_id }}"
       when: tenant_name is not defined
     
     - name: Display tenant info
@@ -139,51 +151,43 @@
     # =============================================
     
     - name: Get all backups for this volume
-      shell: |
-        openstack volume backup list --volume {{ volume_id }} -f json
-      register: all_backups_raw
-      changed_when: false
-      failed_when: false
+      openstack.cloud.volume_backup_info:
+        volume: "{{ volume_id }}"
+      register: all_backups_info
+      ignore_errors: true
     
-    - name: Parse backup list
+    - name: Set backups list
       set_fact:
-        all_backups: "{{ all_backups_raw.stdout | from_json }}"
-      when:
-        - all_backups_raw.stdout is defined
-        - all_backups_raw.stdout | length > 2
+        all_backups: "{{ all_backups_info.backups | default([]) }}"
+      when: all_backups_info is defined
     
-    - name: Calculate retention date
-      shell: date -d "{{ retention_days }} days ago" +%Y-%m-%d
-      register: retention_date_output
-      changed_when: false
-      when: all_backups is defined
+    - name: Calculate retention date (Python)
+      set_fact:
+        retention_date: "{{ '%Y-%m-%d' | strftime((ansible_date_time.epoch | int) - (retention_days | int * 86400)) }}"
     
     - name: Find old backups to delete
       set_fact:
-        old_backups: "{{ all_backups | selectattr('Created At', 'defined') | selectattr('Created At', 'lt', retention_date_output.stdout) | list }}"
-      when:
-        - all_backups is defined
-        - retention_date_output is defined
-        - all_backups | length > 0
+        old_backups: "{{ all_backups | selectattr('created_at', 'defined') | selectattr('created_at', 'lt', retention_date) | list }}"
+      when: all_backups | length > 0
     
     - name: Display retention info
       debug:
         msg:
           - "Retention: {{ retention_days }} giorni"
-          - "Cutoff date: {{ retention_date_output.stdout | default('N/A') }}"
-          - "Total backups: {{ all_backups | default([]) | length }}"
+          - "Cutoff date: {{ retention_date }}"
+          - "Total backups: {{ all_backups | length }}"
           - "Backups to delete: {{ old_backups | default([]) | length }}"
-      when: all_backups is defined
     
     - name: Delete old backups
-      shell: |
-        openstack volume backup delete {{ item.ID }}
+      openstack.cloud.volume_backup:
+        name: "{{ item.id }}"
+        state: absent
       loop: "{{ old_backups }}"
       when:
         - old_backups is defined
         - old_backups | length > 0
       register: delete_results
-      failed_when: false
+      ignore_errors: true
     
     - name: Show cleanup result
       debug:
