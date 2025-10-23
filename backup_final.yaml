@@ -30,34 +30,57 @@
     
     # =============================================
     # 3. RECUPERA INFO VOLUME DA OPENSTACK
+    # Include project_id (tenant)
     # =============================================
     
     - name: Get volume info from OpenStack
-      openstack.cloud.volume_info:
-        name: "{{ volume_id }}"
-      register: volume_info
-      ignore_errors: true
+      shell: |
+        openstack volume show {{ volume_id }} -f json
+      register: volume_info_raw
+      changed_when: false
     
-    - name: Set volume name from OpenStack
+    - name: Parse volume info
       set_fact:
-        volume_name: "{{ volume_info.volumes[0].name }}"
-      when:
-        - volume_info is defined
-        - volume_info.volumes is defined
-        - volume_info.volumes | length > 0
+        volume_data: "{{ volume_info_raw.stdout | from_json }}"
     
-    - name: Set fallback volume name if not found
+    - name: Set volume name
       set_fact:
-        volume_name: "volume-{{ volume_id[:8] }}"
-      when: volume_name is not defined
+        volume_name: "{{ volume_data.name }}"
+    
+    - name: Set volume project_id (tenant)
+      set_fact:
+        volume_project_id: "{{ volume_data.os-vol-tenant-attr:tenant_id | default(volume_data.project_id | default('unknown')) }}"
+    
+    - name: Display volume info
+      debug:
+        msg:
+          - "Volume name: {{ volume_name }}"
+          - "Volume project_id: {{ volume_project_id }}"
     
     # =============================================
-    # 4. RECUPERA TENANT NAME
+    # 4. RECUPERA TENANT NAME DA PROJECT_ID
     # =============================================
     
-    - name: Get tenant from environment variable
+    - name: Get tenant name from project_id
+      shell: |
+        openstack project show {{ volume_project_id }} -f value -c name 2>/dev/null || echo "unknown"
+      register: tenant_name_output
+      changed_when: false
+      when: volume_project_id != 'unknown'
+    
+    - name: Set tenant name
       set_fact:
-        tenant_name: "{{ tenant_name | default(lookup('env', 'OS_PROJECT_NAME') | default('default')) }}"
+        tenant_name: "{{ tenant_name | default(tenant_name_output.stdout | default('default')) }}"
+      when: tenant_name_output is defined
+    
+    - name: Set fallback tenant name
+      set_fact:
+        tenant_name: "{{ tenant_name | default('default') }}"
+      when: tenant_name is not defined
+    
+    - name: Display tenant info
+      debug:
+        msg: "Tenant resolved: {{ tenant_name }}"
     
     # =============================================
     # 5. GENERA NOME BACKUP
