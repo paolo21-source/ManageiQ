@@ -89,16 +89,20 @@
     
     # =============================================
     # 4. GENERA NOME BACKUP (FIX 2)
-    # Format: anno_mese_giorno_backup_volumename_tenantid
+    # Format: anno_mese_giorno_backup_volumename_tenantname
     # =============================================
     
     - name: Clean volume name
       set_fact:
         clean_volume_name: "{{ volume_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
     
+    - name: Clean tenant name
+      set_fact:
+        clean_tenant_name: "{{ tenant_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
+    
     - name: Generate backup name with naming convention
       set_fact:
-        backup_name: "{{ ansible_date_time.year }}_{{ '%02d' | format(ansible_date_time.month | int) }}_{{ '%02d' | format(ansible_date_time.day | int) }}_backup_{{ clean_volume_name }}_{{ tenant_id }}"
+        backup_name: "{{ ansible_date_time.year }}_{{ '%02d' | format(ansible_date_time.month | int) }}_{{ '%02d' | format(ansible_date_time.day | int) }}_backup_{{ clean_volume_name }}_{{ clean_tenant_name }}"
     
     - name: Display backup info
       debug:
