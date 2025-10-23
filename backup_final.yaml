@@ -38,20 +38,27 @@
         name: "{{ volume_id }}"
       register: volume_info
     
+    - name: Check if volume exists
+      fail:
+        msg: "Volume {{ volume_id }} not found in OpenStack"
+      when:
+        - volume_info.volumes is not defined or volume_info.volumes | length == 0
+    
     - name: Set volume data
       set_fact:
         volume_data: "{{ volume_info.volumes[0] }}"
-      when:
-        - volume_info.volumes is defined
-        - volume_info.volumes | length > 0
     
     - name: Set volume name
       set_fact:
         volume_name: "{{ volume_data.name }}"
     
-    - name: Set volume project_id (tenant)
+    - name: Debug volume_data to find project_id field
+      debug:
+        var: volume_data
+    
+    - name: Set volume project_id (tenant) - try multiple fields
       set_fact:
-        volume_project_id: "{{ volume_data.os-vol-tenant-attr:tenant_id | default(volume_data.attachments[0].project_id | default('unknown')) }}"
+        volume_project_id: "{{ volume_data['os-vol-tenant-attr:tenant_id'] | default(volume_data.metadata.project_id | default(lookup('env', 'OS_PROJECT_ID') | default('unknown'))) }}"
     
     - name: Display volume info
       debug:
