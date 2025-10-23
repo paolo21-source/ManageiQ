@@ -55,21 +55,35 @@
         volume_name: "{{ volume_data.name }}"
     
     # =============================================
-    # 4. GENERA NOME BACKUP
-    # Format: anno_mese_giorno_backup_volumename_tenantname
+    # 4. GENERA NOME BACKUP FINALE
+    # Format: anno_mese_giorno_nome_backup_tenant
     # =============================================
     
-    - name: Clean volume name
+    - name: Generate date prefix
       set_fact:
-        clean_volume_name: "{{ volume_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
+        date_prefix: "{{ ansible_date_time.year }}_{{ '%02d' | format(ansible_date_time.month | int) }}_{{ '%02d' | format(ansible_date_time.day | int) }}"
     
     - name: Clean tenant name
       set_fact:
         clean_tenant_name: "{{ tenant_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
     
-    - name: Generate backup name
+    - name: Check if custom backup_name is provided
       set_fact:
-        backup_name: "{{ ansible_date_time.year }}_{{ '%02d' | format(ansible_date_time.month | int) }}_{{ '%02d' | format(ansible_date_time.day | int) }}_backup_{{ clean_volume_name }}_{{ clean_tenant_name }}"
+        has_backup_name: "{{ backup_name is defined and backup_name | length > 0 }}"
+    
+    - name: Use custom backup name if provided
+      set_fact:
+        clean_backup_name: "{{ backup_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
+      when: has_backup_name
+    
+    - name: Generate default backup name from volume if not provided
+      set_fact:
+        clean_backup_name: "backup_{{ volume_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
+      when: not has_backup_name
+    
+    - name: Compose final backup name (date + name + tenant)
+      set_fact:
+        final_backup_name: "{{ date_prefix }}_{{ clean_backup_name }}_{{ clean_tenant_name }}"
     
     - name: Display backup info
       debug:
@@ -80,7 +94,12 @@
           - "Volume ID: {{ volume_id }}"
           - "Volume Name: {{ volume_name }}"
           - "Tenant: {{ tenant_name }}"
-          - "Backup Name: {{ backup_name }}"
+          - "---"
+          - "Nome backup finale: {{ final_backup_name }}"
+          - "  - Data: {{ date_prefix }}"
+          - "  - Nome: {{ clean_backup_name }}"
+          - "  - Tenant: {{ clean_tenant_name }}"
+          - "---"
           - "Retention: {{ retention_days }} giorni"
           - "=============================================="
     
@@ -93,7 +112,7 @@
         volume: "{{ volume_id }}"
         state: present
         force: true
-        name: "{{ backup_name }}"
+        name: "{{ final_backup_name }}"
         description: "Backup automatico daily - Retention {{ retention_days }}gg - Tenant: {{ tenant_name }}"
       register: backup_result
     
@@ -166,7 +185,7 @@
           - "=============================================="
           - "BACKUP COMPLETATO"
           - "=============================================="
-          - "Backup Name: {{ backup_name }}"
+          - "Backup Name: {{ final_backup_name }}"
           - "Backup ID: {{ backup_result.backup.id | default('N/A') }}"
           - "Volume: {{ volume_name }} ({{ volume_id }})"
           - "Tenant: {{ tenant_name }}"
