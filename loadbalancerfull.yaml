@@ -1,0 +1,56 @@
+---
+# LOAD BALANCER DETAILS
+lb_name: "test-lb-complete-001"
+lb_subnet: "admin-subnet-priv01"
+lb_ip_address: "192.168.0.25"  # Opzionale
+lb_description: "Load Balancer completo di test"
+lb_admin_state_up: true
+
+# LISTENER DETAILS
+create_listener: true
+listener_port: 80
+listener_protocol: "TCP"
+listener_description: "Listener per traffico HTTP"
+listener_connection_limit: -1
+listener_client_data_timeout: 50000
+listener_member_connect_timeout: 5000
+listener_member_data_timeout: 50000
+listener_tcp_inspect_timeout: 0
+listener_allowed_cidrs: "0.0.0.0/0"
+listener_admin_state_up: true
+
+# POOL DETAILS
+create_pool: true
+pool_description: "Pool backend servers"
+pool_protocol: "TCP"
+pool_algorithm: "ROUND_ROBIN"  # ROUND_ROBIN, LEAST_CONNECTIONS, SOURCE_IP
+pool_session_persistence: "SOURCE_IP"  # None, SOURCE_IP, HTTP_COOKIE, APP_COOKIE
+pool_tls_enabled: false
+pool_admin_state_up: true
+
+# POOL MEMBERS
+backend_servers: "192.168.1.10:8080,192.168.1.11:8080,192.168.1.12:8080"
+backend_subnet: "admin-subnet-priv01"
+backend_port: 8080
+backend_weight: 1
+
+# HEALTH MONITOR
+create_health_monitor: true
+monitor_type: "TCP"  # HTTP, HTTPS, PING, TCP, TLS-HELLO, UDP-CONNECT
+monitor_delay: 5
+monitor_timeout: 5
+monitor_max_retries: 3
+monitor_max_retries_down: 3
+monitor_admin_state_up: true
+
+# Per HTTP/HTTPS health checks
+# monitor_http_method: "GET"
+# monitor_url_path: "/health"
+# monitor_expected_codes: "200"
+
+# FLOATING IP
+assign_floating_ip: true
+floating_ip_network: "external_pub_vlan20"
+
+# CLEANUP
+cleanup_existing: false
