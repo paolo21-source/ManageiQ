@@ -64,20 +64,30 @@
         timeout: 800
       register: lb_created
     
-    - name: Debug - Show complete LB structure
-      debug:
-        msg: "LB Created Result: {{ lb_created }}"
-      when: ansible_verbosity >= 2
-    
-    - name: Save LB VIP info (safe access)
+    # 🆕 FIX: Query diretta invece di leggere dal modulo
+    - name: Get Load Balancer info from OpenStack
+      ansible.builtin.command:
+        cmd: >
+          openstack loadbalancer show {{ lb_name }} -f json
+      register: lb_info_raw
+      changed_when: false
+      retries: 3
+      delay: 5
+      until: lb_info_raw.rc == 0
+      
+    - name: Parse LB info
       set_fact:
-        lb_vip_address: "{{ lb_created.loadbalancer.vip_address | default(lb_created.vip_address | default('N/A')) }}"
-        lb_vip_port_id: "{{ lb_created.loadbalancer.vip_port_id | default(lb_created.vip_port_id | default('N/A')) }}"
-        lb_id: "{{ lb_created.loadbalancer.id | default(lb_created.id | default('N/A')) }}"
+        lb_info: "{{ lb_info_raw.stdout | from_json }}"
+    
+    - name: Save LB VIP info from OpenStack query
+      set_fact:
+        lb_vip_address: "{{ lb_info.vip_address }}"
+        lb_vip_port_id: "{{ lb_info.vip_port_id }}"
+        lb_id: "{{ lb_info.id }}"
     
     - name: Log LB creation success
       debug:
-        msg: "✅ Load Balancer '{{ lb_name }}' creato! VIP: {{ lb_vip_address }}"
+        msg: "✅ Load Balancer '{{ lb_name }}' creato! VIP: {{ lb_vip_address }}, Port ID: {{ lb_vip_port_id }}"
     
     # ========================================
     # CREA LISTENER
