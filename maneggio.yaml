@@ -1,0 +1,171 @@
+---
+# ============================================
+# Playbook AWX: Manage Backup Schedule Actions
+# Attiva, disattiva o elimina schedule esistenti
+# ============================================
+
+- name: Manage Backup Schedule Actions
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  
+  vars:
+    awx_host: "https://services.xaaslab.it"
+    awx_user: "paolo.astorino"
+    awx_password: "gaxH=5[]zu22"
+    awx_validate_certs: false
+  
+  tasks:
+    # =============================================
+    # 1. VALIDAZIONE INPUT
+    # =============================================
+    
+    - name: Validate required variables
+      assert:
+        that:
+          - volume_id is defined and volume_id | length > 0
+          - schedule_id is defined and schedule_id | length > 0
+          - manage_action is defined and manage_action | length > 0
+          - manage_action in ['activate', 'deactivate', 'disable']
+        fail_msg: "ERROR: Missing or invalid variables"
+        success_msg: "Variables OK"
+    
+    # =============================================
+    # 2. RECUPERA NOME VOLUME DA OPENSTACK
+    # =============================================
+    
+    - name: Get all volumes from OpenStack
+      openstack.cloud.volume_info:
+        details: true
+      register: all_volumes
+    
+    - name: Find volume by ID
+      set_fact:
+        volume_data: "{{ all_volumes.volumes | selectattr('id', 'equalto', volume_id) | first | default(None) }}"
+    
+    - name: Check if volume exists
+      fail:
+        msg: "Volume {{ volume_id }} not found"
+      when: volume_data is none
+    
+    - name: Set volume name
+      set_fact:
+        volume_name: "{{ volume_data.name }}"
+    
+    # =============================================
+    # 3. RECUPERA DETTAGLI SCHEDULE
+    # =============================================
+    
+    - name: Get schedule details
+      uri:
+        url: "{{ awx_host }}/api/v2/schedules/{{ schedule_id }}/"
+        method: GET
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ awx_validate_certs }}"
+        return_content: yes
+      register: schedule_details
+    
+    - name: Display schedule info
+      debug:
+        msg:
+          - "=============================================="
+          - "GESTIONE BACKUP SCHEDULE"
+          - "=============================================="
+          - "Azione: {{ manage_action }}"
+          - "Schedule ID: {{ schedule_id }}"
+          - "Schedule Name: {{ schedule_details.json.name }}"
+          - "Volume: {{ volume_name }} ({{ volume_id }})"
+          - "Stato attuale: {{ 'Attivo' if schedule_details.json.enabled else 'Disattivo' }}"
+          - "=============================================="
+    
+    # =============================================
+    # 4. AZIONE: ACTIVATE
+    # =============================================
+    
+    - name: Activate schedule
+      uri:
+        url: "{{ awx_host }}/api/v2/schedules/{{ schedule_id }}/"
+        method: PATCH
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ awx_validate_certs }}"
+        body_format: json
+        body:
+          enabled: true
+        status_code: [200, 204]
+      when: manage_action == "activate"
+      register: activate_result
+    
+    - name: Show success message (activate)
+      debug:
+        msg:
+          - "=============================================="
+          - "✓ BACKUP SCHEDULE ATTIVATO"
+          - "=============================================="
+          - "Schedule: {{ schedule_details.json.name }}"
+          - "Volume: {{ volume_name }} ({{ volume_id }})"
+          - "Prossima esecuzione: {{ schedule_details.json.next_run | default('N/A') }}"
+          - "=============================================="
+      when: manage_action == "activate"
+    
+    # =============================================
+    # 5. AZIONE: DEACTIVATE
+    # =============================================
+    
+    - name: Deactivate schedule
+      uri:
+        url: "{{ awx_host }}/api/v2/schedules/{{ schedule_id }}/"
+        method: PATCH
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ awx_validate_certs }}"
+        body_format: json
+        body:
+          enabled: false
+        status_code: [200, 204]
+      when: manage_action == "deactivate"
+      register: deactivate_result
+    
+    - name: Show success message (deactivate)
+      debug:
+        msg:
+          - "=============================================="
+          - "✓ BACKUP SCHEDULE DISATTIVATO"
+          - "=============================================="
+          - "Schedule: {{ schedule_details.json.name }}"
+          - "Volume: {{ volume_name }} ({{ volume_id }})"
+          - "Lo schedule è stato disattivato ma non eliminato"
+          - "=============================================="
+      when: manage_action == "deactivate"
+    
+    # =============================================
+    # 6. AZIONE: DISABLE (Elimina)
+    # =============================================
+    
+    - name: Delete schedule
+      uri:
+        url: "{{ awx_host }}/api/v2/schedules/{{ schedule_id }}/"
+        method: DELETE
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ awx_validate_certs }}"
+        status_code: [204, 404]
+      when: manage_action == "disable"
+      register: delete_result
+    
+    - name: Show success message (disable)
+      debug:
+        msg:
+          - "=============================================="
+          - "✓ BACKUP SCHEDULE ELIMINATO"
+          - "=============================================="
+          - "Schedule: {{ schedule_details.json.name }}"
+          - "Volume: {{ volume_name }} ({{ volume_id }})"
+          - "Lo schedule è stato eliminato definitivamente"
+          - "=============================================="
+      when: manage_action == "disable"
