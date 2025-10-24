@@ -99,7 +99,7 @@
     
     - name: Create new schedule with tenant and retention info
       awx.awx.schedule:
-        name: "Giornaliero - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})"
+        name: " {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})"
         unified_job_template: "Cinder Volume Backup"
         rrule: "DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m%d') }}T020000 RRULE:FREQ=DAILY;INTERVAL=1"
         extra_data:
