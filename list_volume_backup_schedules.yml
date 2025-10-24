@@ -17,6 +17,7 @@
         that:
           - volume_id is defined and volume_id | length > 0
         fail_msg: "ERROR: Missing volume_id"
+        success_msg: "Volume ID received: {{ volume_id }}"
     
     # Recupera info volume
     - name: Get volume info from OpenStack
@@ -26,12 +27,18 @@
     
     - name: Find volume by ID
       set_fact:
-        volume_data: "{{ all_volumes.volumes | selectattr('id', 'equalto', volume_id) | first | default(None) }}"
+        matching_volumes: "{{ all_volumes.volumes | selectattr('id', 'equalto', volume_id) | list }}"
     
-    - name: Set volume name
+    - name: Check if volume exists
+      fail:
+        msg: "Volume {{ volume_id }} not found in OpenStack"
+      when: matching_volumes | length == 0
+    
+    - name: Set volume data and name
       set_fact:
-        volume_name: "{{ volume_data.name }}"
-      when: volume_data is not none
+        volume_data: "{{ matching_volumes[0] }}"
+        volume_name: "{{ matching_volumes[0].name }}"
+      when: matching_volumes | length > 0
     
     # Recupera tutti gli schedule da AWX
     - name: Get all schedules from AWX
@@ -60,13 +67,18 @@
           - "Volume: {{ volume_name | default('Unknown') }} ({{ volume_id }})"
           - "Number of active schedules: {{ volume_schedules | length }}"
           - "=============================================="
-          - "{% for schedule in volume_schedules %}"
-          - "Schedule Name: {{ schedule.name }}"
-          - "Schedule ID: {{ schedule.id }}"
-          - "Next Run: {{ schedule.next_run | default('N/A') }}"
-          - "Enabled: {{ schedule.enabled }}"
+      when: volume_schedules | length > 0
+    
+    - name: Display each schedule
+      debug:
+        msg:
+          - "Schedule Name: {{ item.name }}"
+          - "Schedule ID: {{ item.id }}"
+          - "Next Run: {{ item.next_run | default('N/A') }}"
+          - "Enabled: {{ item.enabled }}"
           - "---"
-          - "{% endfor %}"
+      loop: "{{ volume_schedules }}"
+      when: volume_schedules | length > 0
     
     - name: No schedules found
       debug:
