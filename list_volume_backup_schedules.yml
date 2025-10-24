@@ -25,14 +25,40 @@
         details: true
       register: all_volumes
     
-    - name: Find volume by ID
+    # DEBUG: Mostra tutti i volumi e i loro ID
+    - name: Debug - Show all volumes
+      debug:
+        msg: "Volume: {{ item.name }} - ID: {{ item.id }}"
+      loop: "{{ all_volumes.volumes }}"
+    
+    - name: Debug - Show volume_id we're looking for
+      debug:
+        msg: "Looking for volume_id: {{ volume_id }}"
+    
+    # Prova a cercare il volume in modi diversi
+    - name: Find volume by ID (exact match)
       set_fact:
         matching_volumes: "{{ all_volumes.volumes | selectattr('id', 'equalto', volume_id) | list }}"
     
-    - name: Check if volume exists
-      fail:
-        msg: "Volume {{ volume_id }} not found in OpenStack"
+    - name: Debug - Matching volumes found
+      debug:
+        msg: "Found {{ matching_volumes | length }} matching volumes"
+    
+    # Se non lo trova con equalto, prova con 'in' o 'search'
+    - name: Try alternate search if no match
+      set_fact:
+        matching_volumes: "{{ all_volumes.volumes | selectattr('id', 'search', volume_id) | list }}"
       when: matching_volumes | length == 0
+    
+    - name: Debug - After alternate search
+      debug:
+        msg: "After alternate search: Found {{ matching_volumes | length }} matching volumes"
+    
+    # Se ancora non lo trova, mostra tutti gli attributi del primo volume
+    - name: Debug - Show first volume attributes
+      debug:
+        var: all_volumes.volumes[0]
+      when: all_volumes.volumes | length > 0
     
     - name: Set volume data and name
       set_fact:
@@ -51,11 +77,13 @@
         validate_certs: "{{ awx_validate_certs }}"
         return_content: yes
       register: awx_schedules
+      when: matching_volumes | length > 0
     
     # Filtra schedule per questo volume
     - name: Filter schedules for this volume
       set_fact:
         volume_schedules: "{{ awx_schedules.json.results | selectattr('name', 'search', volume_id) | list }}"
+      when: matching_volumes | length > 0
     
     # Mostra risultati
     - name: Display active schedules
@@ -67,7 +95,10 @@
           - "Volume: {{ volume_name | default('Unknown') }} ({{ volume_id }})"
           - "Number of active schedules: {{ volume_schedules | length }}"
           - "=============================================="
-      when: volume_schedules | length > 0
+      when: 
+        - matching_volumes | length > 0
+        - volume_schedules is defined
+        - volume_schedules | length > 0
     
     - name: Display each schedule
       debug:
@@ -78,9 +109,20 @@
           - "Enabled: {{ item.enabled }}"
           - "---"
       loop: "{{ volume_schedules }}"
-      when: volume_schedules | length > 0
+      when: 
+        - matching_volumes | length > 0
+        - volume_schedules is defined
+        - volume_schedules | length > 0
     
     - name: No schedules found
       debug:
         msg: "No active backup schedules found for this volume"
-      when: volume_schedules | length == 0
+      when: 
+        - matching_volumes | length > 0
+        - volume_schedules is defined
+        - volume_schedules | length == 0
+    
+    - name: Volume not found
+      debug:
+        msg: "Volume {{ volume_id }} not found in OpenStack. Please check the volume ID."
+      when: matching_volumes | length == 0
