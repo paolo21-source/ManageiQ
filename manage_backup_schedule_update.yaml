@@ -119,10 +119,10 @@
         validate_certs: "{{ awx_validate_certs }}"
       vars:
         schedule_name: >-
-          {% if frequency == 'daily' %}Daily Backup - {{ volume_name }} ({{ volume_id }})
-          {% elif frequency == 'weekly' %}Weekly Backup - {{ volume_name }} ({{ volume_id }})
-          {% elif frequency == 'monthly' %}Monthly Backup - {{ volume_name }} ({{ volume_id }})
-          {% else %}Unknown Backup - {{ volume_name }} ({{ volume_id }})
+          {% if frequency == 'daily' %}Backup Giornaliero - {{ backup_name }} 
+          {% elif frequency == 'weekly' %}Backup Settimanale - {{ backup_name }} 
+          {% elif frequency == 'monthly' %}Backup Mensile - {{ backup_name }} 
+          {% else %}Unknown Backup - {{ backup_name }} 
           {% endif %}
         schedule_rrule: >-
           {% if frequency == 'daily' %}DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m%d') }}T020000 RRULE:FREQ=DAILY;INTERVAL=1
