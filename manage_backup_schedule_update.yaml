@@ -78,20 +78,38 @@
     # =============================================
     # 5. DELETE EXISTING SCHEDULES
     # =============================================
-    
-    - name: Delete existing schedules for this volume
-      awx.awx.schedule:
-        name: "Giornaliero - {{ volume_name }} - {{ tenant_name }} - ({{ volume_id }})"
-        state: absent
-        controller_host: "{{ awx_host }}"
-        controller_username: "{{ awx_user }}"
-        controller_password: "{{ awx_password }}"
+
+    - name: Get all schedules from AWX
+      uri:
+        url: "{{ awx_host }}/api/v2/schedules/"
+        method: GET
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: yes
         validate_certs: "{{ awx_validate_certs }}"
+        return_content: yes
+      register: awx_schedules
+
+    - name: Filter schedules for this volume
+      set_fact:
+        volume_schedules: "{{ awx_schedules.json.results | selectattr('name', 'search', volume_id) | list }}"
+
+    - name: Delete all existing schedules for this volume
+      uri:
+        url: "{{ awx_host }}/api/v2/schedules/{{ item.id }}/"
+        method: DELETE
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ awx_validate_certs }}"
+        status_code: [204, 404]
+      loop: "{{ volume_schedules }}"
+      when: volume_schedules | length > 0
       ignore_errors: true
-    
+
     - name: Show delete result
       debug:
-        msg: "✓ Deleted existing schedules (if any)"
+        msg: "✓ Deleted {{ volume_schedules | length }} existing schedule(s)"
     
     # =============================================
     # 6. CREATE NEW SCHEDULE (if backup_action=enable)
