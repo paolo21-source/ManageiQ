@@ -72,27 +72,4 @@
       debug:
         msg: "No active backup schedules found for this volume"
       when: volume_schedules | length == 0
-```
-
-## 2. Configurare ManageIQ
-
-### a) Aggiungere il playbook al repository Ansible in ManageIQ
-- Vai in **Automation → Ansible → Repositories**
-- Aggiungi/aggiorna il tuo repository con il nuovo playbook
-
-### b) Creare un Custom Button
-- Vai in **Automation → Automate → Customization**
-- Seleziona **Buttons**
-- Seleziona **Cloud Volumes** (o dove hai i tuoi volumi)
-- Clicca **Configuration → Add a new Button**
-
-Configura:
-- **Button Text**: "List Backup Schedules"
-- **Button Hover Text**: "Show active backup schedules for this volume"
-- **Icon**: Scegli un'icona appropriata (es. lista/calendario)
-- **Dialog**: Nessuno (non serve input)
-- **System/Process**: Seleziona **Run Ansible Playbook**
-- **Playbook**: Seleziona il playbook appena creato
-- **Variables**: 
-```
   volume_id: $evm.root['cloud_volume'].ems_ref
