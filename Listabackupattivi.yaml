@@ -1,0 +1,98 @@
+---
+- name: List Active Backup Schedules for Volume
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  
+  vars:
+    awx_host: "https://services.xaaslab.it"
+    awx_user: "paolo.astorino"
+    awx_password: "gaxH=5[]zu22"
+    awx_validate_certs: false
+  
+  tasks:
+    # Validazione input
+    - name: Validate required variables
+      assert:
+        that:
+          - volume_id is defined and volume_id | length > 0
+        fail_msg: "ERROR: Missing volume_id"
+    
+    # Recupera info volume
+    - name: Get volume info from OpenStack
+      openstack.cloud.volume_info:
+        details: true
+      register: all_volumes
+    
+    - name: Find volume by ID
+      set_fact:
+        volume_data: "{{ all_volumes.volumes | selectattr('id', 'equalto', volume_id) | first | default(None) }}"
+    
+    - name: Set volume name
+      set_fact:
+        volume_name: "{{ volume_data.name }}"
+      when: volume_data is not none
+    
+    # Recupera tutti gli schedule da AWX
+    - name: Get all schedules from AWX
+      uri:
+        url: "{{ awx_host }}/api/v2/schedules/"
+        method: GET
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ awx_validate_certs }}"
+        return_content: yes
+      register: awx_schedules
+    
+    # Filtra schedule per questo volume
+    - name: Filter schedules for this volume
+      set_fact:
+        volume_schedules: "{{ awx_schedules.json.results | selectattr('name', 'search', volume_id) | list }}"
+    
+    # Mostra risultati
+    - name: Display active schedules
+      debug:
+        msg:
+          - "=============================================="
+          - "ACTIVE BACKUP SCHEDULES"
+          - "=============================================="
+          - "Volume: {{ volume_name | default('Unknown') }} ({{ volume_id }})"
+          - "Number of active schedules: {{ volume_schedules | length }}"
+          - "=============================================="
+          - "{% for schedule in volume_schedules %}"
+          - "Schedule Name: {{ schedule.name }}"
+          - "Schedule ID: {{ schedule.id }}"
+          - "Next Run: {{ schedule.next_run | default('N/A') }}"
+          - "Enabled: {{ schedule.enabled }}"
+          - "---"
+          - "{% endfor %}"
+    
+    - name: No schedules found
+      debug:
+        msg: "No active backup schedules found for this volume"
+      when: volume_schedules | length == 0
+```
+
+## 2. Configurare ManageIQ
+
+### a) Aggiungere il playbook al repository Ansible in ManageIQ
+- Vai in **Automation → Ansible → Repositories**
+- Aggiungi/aggiorna il tuo repository con il nuovo playbook
+
+### b) Creare un Custom Button
+- Vai in **Automation → Automate → Customization**
+- Seleziona **Buttons**
+- Seleziona **Cloud Volumes** (o dove hai i tuoi volumi)
+- Clicca **Configuration → Add a new Button**
+
+Configura:
+- **Button Text**: "List Backup Schedules"
+- **Button Hover Text**: "Show active backup schedules for this volume"
+- **Icon**: Scegli un'icona appropriata (es. lista/calendario)
+- **Dialog**: Nessuno (non serve input)
+- **System/Process**: Seleziona **Run Ansible Playbook**
+- **Playbook**: Seleziona il playbook appena creato
+- **Variables**: 
+```
+  volume_id: $evm.root['cloud_volume'].ems_ref
