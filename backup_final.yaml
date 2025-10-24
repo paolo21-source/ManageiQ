@@ -1,7 +1,7 @@
 ---
 # ============================================
 # Playbook AWX: Manage Cinder Volume Backup Schedule
-# VERSIONE CORRETTA - usa solo moduli Ansible
+# VERSIONE SEMPLIFICATA - Solo backup giornalieri
 # ============================================
 
 - name: Manage Cinder Volume Backup Schedule
@@ -28,6 +28,13 @@
           - backup_action is defined and backup_action | length > 0
         fail_msg: "ERROR: Missing required variables (volume_id, backup_action)"
         success_msg: "Variables OK - volume_id: {{ volume_id }}, backup_action: {{ backup_action }}"
+    
+    - name: Validate backup_name for enable action
+      assert:
+        that:
+          - backup_name is defined and backup_name | length > 0
+        fail_msg: "ERROR: backup_name is required for enable action"
+      when: backup_action == 'enable'
     
     # =============================================
     # 2. IMPOSTA DEFAULT
@@ -60,7 +67,30 @@
         volume_name: "{{ volume_data.name }}"
     
     # =============================================
-    # 4. DISPLAY INFO
+    # 4. RECUPERA SCHEDULE ESISTENTI
+    # =============================================
+    
+    - name: Get all schedules from AWX
+      uri:
+        url: "{{ awx_host }}/api/v2/schedules/"
+        method: GET
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ awx_validate_certs }}"
+        return_content: yes
+      register: awx_schedules
+    
+    - name: Filter schedules for this volume
+      set_fact:
+        volume_schedules: "{{ awx_schedules.json.results | selectattr('name', 'search', volume_id) | list }}"
+    
+    - name: Filter active schedules for this volume
+      set_fact:
+        active_schedules: "{{ volume_schedules | selectattr('enabled', 'equalto', true) | list }}"
+    
+    # =============================================
+    # 5. DISPLAY INFO
     # =============================================
     
     - name: Log action
@@ -72,109 +102,96 @@
           - "Action: {{ backup_action }}"
           - "Volume: {{ volume_name }} ({{ volume_id }})"
           - "Tenant: {{ tenant_name }}"
-          - "Frequency: {{ frequency | default('N/A') }}"
+          - "Existing schedules: {{ volume_schedules | length }}"
+          - "Active schedules: {{ active_schedules | length }}"
           - "Retention: {{ retention_days }} giorni"
           - "=============================================="
     
     # =============================================
-    # 5. DELETE EXISTING SCHEDULES
+    # 6. AZIONE: ENABLE (Crea nuovo schedule giornaliero)
     # =============================================
     
-    - name: Delete existing schedules for this volume
+    - name: Check if active schedule already exists
+      fail:
+        msg: |
+          ERRORE: Esiste già un backup schedule attivo per questo volume!
+          Nome: {{ active_schedules[0].name }}
+          Per creare un nuovo schedule, prima disattiva o elimina quello esistente.
+      when: 
+        - backup_action == 'enable'
+        - active_schedules | length > 0
+    
+    - name: Create new daily backup schedule
       awx.awx.schedule:
-        name: "{{ item }}"
-        state: absent
-        controller_host: "{{ awx_host }}"
-        controller_username: "{{ awx_user }}"
-        controller_password: "{{ awx_password }}"
-        validate_certs: "{{ awx_validate_certs }}"
-      loop:
-        - "Daily Backup - {{ volume_name }} ({{ volume_id }})"
-        - "Weekly Backup - {{ volume_name }} ({{ volume_id }})"
-        - "Monthly Backup - {{ volume_name }} ({{ volume_id }})"
-      ignore_errors: true
-    
-    - name: Show delete result
-      debug:
-        msg: "✓ Deleted existing schedules (if any)"
-    
-    # =============================================
-    # 6. CREATE NEW SCHEDULE (if backup_action=enable)
-    # =============================================
-    
-    - name: Create new schedule with tenant and retention info
-      awx.awx.schedule:
-        name: "{{ schedule_name }}"
+        name: "Giornaliero - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})"
         unified_job_template: "Cinder Volume Backup"
-        rrule: "{{ schedule_rrule }}"
+        rrule: "DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m%d') }}T020000 RRULE:FREQ=DAILY;INTERVAL=1"
+        enabled: true
         extra_data:
           volume_id: "{{ volume_id }}"
           tenant_name: "{{ tenant_name }}"
-          backup_name: "{{ frequency }}_{{ backup_name }}"
+          backup_name: "daily_{{ backup_name }}"
           retention_days: "{{ retention_days }}"
         state: present
         controller_host: "{{ awx_host }}"
         controller_username: "{{ awx_user }}"
         controller_password: "{{ awx_password }}"
         validate_certs: "{{ awx_validate_certs }}"
-      vars:
-        schedule_name: >-
-          {% if frequency == 'daily' %}Daily Backup - {{ volume_name }} ({{ volume_id }})
-          {% elif frequency == 'weekly' %}Weekly Backup - {{ volume_name }} ({{ volume_id }})
-          {% elif frequency == 'monthly' %}Monthly Backup - {{ volume_name }} ({{ volume_id }})
-          {% else %}Unknown Backup - {{ volume_name }} ({{ volume_id }})
-          {% endif %}
-        schedule_rrule: >-
-          {% if frequency == 'daily' %}DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m%d') }}T020000 RRULE:FREQ=DAILY;INTERVAL=1
-          {% elif frequency == 'weekly' %}DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m%d') }}T020000 RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO
-          {% elif frequency == 'monthly' %}DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m') }}01T020000 RRULE:FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=1
-          {% endif %}
       when: backup_action == "enable"
-      register: schedule_result
-    
-    # =============================================
-    # 7. DISPLAY SCHEDULE INFO
-    # =============================================
-    
-    - name: Display schedule ID created
-      debug:
-        msg: 
-          - "✓ Schedule creato con successo!"
-          - "Schedule Name: {{ schedule_result.name | default('N/A') }}"
-          - "Schedule ID: {{ schedule_result.id | default('N/A') }}"
-          - "Tenant: {{ tenant_name }}"
-          - "Retention: {{ retention_days }} giorni"
-          - "Backup name format: YYYY_MM_DD_{{ frequency }}_backup_{{ tenant_name }}"
-      when: 
-        - backup_action == "enable"
-        - schedule_result is defined
-    
-    # =============================================
-    # 8. SUCCESS MESSAGES
-    # =============================================
+      register: schedule_create_result
     
     - name: Show success message (enable)
       debug:
         msg: 
           - "=============================================="
-          - "✓ BACKUP SCHEDULE ATTIVATO"
+          - "✓ BACKUP SCHEDULE CREATO E ATTIVATO"
           - "=============================================="
+          - "Schedule ID: {{ schedule_create_result.id }}"
+          - "Nome: Giornaliero - {{ backup_name }} - {{ tenant_name }}"
           - "Volume: {{ volume_name }} ({{ volume_id }})"
-          - "Tenant: {{ tenant_name }}"
-          - "Frequenza: {{ frequency }}"
+          - "Frequenza: Giornaliero (02:00 UTC)"
           - "Retention: {{ retention_days }} giorni"
-          - "Backup name format: YYYY_MM_DD_{{ frequency }}_backup_{{ tenant_name }}"
+          - "Backup name format: YYYY_MM_DD_daily_{{ backup_name }}_{{ tenant_name }}"
           - "=============================================="
-      when: backup_action == "enable"
+      when: 
+        - backup_action == "enable"
+        - schedule_create_result is defined
+    
+    # =============================================
+    # 7. AZIONE: DISABLE (Elimina tutti gli schedule)
+    # =============================================
+    
+    - name: Delete all schedules for this volume
+      uri:
+        url: "{{ awx_host }}/api/v2/schedules/{{ item.id }}/"
+        method: DELETE
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ awx_validate_certs }}"
+        status_code: [204, 404]
+      loop: "{{ volume_schedules }}"
+      when: 
+        - backup_action == "disable"
+        - volume_schedules | length > 0
+      ignore_errors: true
     
     - name: Show success message (disable)
       debug:
         msg: 
           - "=============================================="
-          - "✓ BACKUP SCHEDULE DISATTIVATO"
+          - "✓ BACKUP SCHEDULE ELIMINATI"
           - "=============================================="
           - "Volume: {{ volume_name }} ({{ volume_id }})"
-          - "Tenant: {{ tenant_name }}"
-          - "Tutti gli schedule per questo volume sono stati eliminati"
+          - "Schedules eliminati: {{ volume_schedules | length }}"
           - "=============================================="
-      when: backup_action == "disable"
+      when: 
+        - backup_action == "disable"
+        - volume_schedules | length > 0
+    
+    - name: No schedules to delete
+      debug:
+        msg: "Nessuno schedule trovato da eliminare per questo volume"
+      when: 
+        - backup_action == "disable"
+        - volume_schedules | length == 0
