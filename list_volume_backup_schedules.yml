@@ -72,4 +72,3 @@
       debug:
         msg: "No active backup schedules found for this volume"
       when: volume_schedules | length == 0
-  volume_id: $evm.root['cloud_volume'].ems_ref
