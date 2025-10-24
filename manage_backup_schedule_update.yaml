@@ -119,9 +119,9 @@
         validate_certs: "{{ awx_validate_certs }}"
       vars:
         schedule_name: >-
-          {% if frequency == 'daily' %}Giornaliero - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})
-          {% elif frequency == 'weekly' %}Settimanale - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})
-          {% elif frequency == 'monthly' %}Mensile - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})
+          Giornaliero - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})
+          Settimanale - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})
+          Mensile - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})
           {% else %}Unknown Backup - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})
           {% endif %}
         schedule_rrule: >-
