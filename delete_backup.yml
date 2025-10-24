@@ -1,0 +1,96 @@
+---
+- name: Delete Backup Schedule
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  
+  vars:
+    awx_host: "https://services.xaaslab.it"
+    awx_user: "paolo.astorino"
+    awx_password: "gaxH=5[]zu22"
+    awx_validate_certs: false
+  
+  tasks:
+    # Validazione
+    - name: Validate required variables
+      assert:
+        that:
+          - schedule_id is defined
+          - schedule_id | length > 0
+          - schedule_id != '!'
+          - schedule_id != 'none'
+          - schedule_id != 'error'
+        fail_msg: "ERROR: Missing or invalid schedule_id"
+        success_msg: "Schedule ID to delete: {{ schedule_id }}"
+    
+    # Recupera info schedule
+    - name: Get schedule info from AWX
+      uri:
+        url: "{{ awx_host }}/api/v2/schedules/{{ schedule_id }}/"
+        method: GET
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ awx_validate_certs }}"
+        return_content: yes
+        status_code: [200, 404]
+      register: schedule_info
+      ignore_errors: yes
+    
+    - name: Check if schedule exists
+      fail:
+        msg: "Schedule with ID {{ schedule_id }} not found in AWX"
+      when: schedule_info.status == 404
+    
+    - name: Display schedule to delete
+      debug:
+        msg:
+          - "=============================================="
+          - "DELETING BACKUP SCHEDULE"
+          - "=============================================="
+          - "Schedule ID: {{ schedule_id }}"
+          - "Schedule Name: {{ schedule_info.json.name }}"
+          - "Enabled: {{ schedule_info.json.enabled }}"
+          - "=============================================="
+      when: schedule_info.status == 200
+    
+    # Cancellazione
+    - name: Delete schedule from AWX
+      uri:
+        url: "{{ awx_host }}/api/v2/schedules/{{ schedule_id }}/"
+        method: DELETE
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ awx_validate_certs }}"
+        status_code: [204, 404]
+      register: delete_result
+    
+    # Verifica
+    - name: Verify deletion
+      uri:
+        url: "{{ awx_host }}/api/v2/schedules/{{ schedule_id }}/"
+        method: GET
+        user: "{{ awx_user }}"
+        password: "{{ awx_password }}"
+        force_basic_auth: yes
+        validate_certs: "{{ awx_validate_certs }}"
+        status_code: [200, 404]
+      register: verify_result
+      ignore_errors: yes
+    
+    - name: Confirm deletion success
+      debug:
+        msg:
+          - "=============================================="
+          - "✓ SCHEDULE DELETED SUCCESSFULLY"
+          - "=============================================="
+          - "Schedule ID {{ schedule_id }} has been removed"
+          - "Schedule Name: {{ schedule_info.json.name }}"
+          - "=============================================="
+      when: verify_result.status == 404
+    
+    - name: Deletion failed
+      fail:
+        msg: "Schedule still exists after deletion attempt"
+      when: verify_result.status == 200
