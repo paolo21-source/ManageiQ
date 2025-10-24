@@ -72,7 +72,6 @@
           - "Action: {{ backup_action }}"
           - "Volume: {{ volume_name }} ({{ volume_id }})"
           - "Tenant: {{ tenant_name }}"
-          - "Frequency: {{ frequency | default('N/A') }}"
           - "Retention: {{ retention_days }} giorni"
           - "=============================================="
     
@@ -82,16 +81,12 @@
     
     - name: Delete existing schedules for this volume
       awx.awx.schedule:
-        name: "{{ item }}"
+        name: "Giornaliero - {{ volume_name }} - {{ tenant_name }} - ({{ volume_id }})"
         state: absent
         controller_host: "{{ awx_host }}"
         controller_username: "{{ awx_user }}"
         controller_password: "{{ awx_password }}"
         validate_certs: "{{ awx_validate_certs }}"
-      loop:
-        - "Daily Backup - {{ volume_name }} ({{ volume_id }})"
-        - "Weekly Backup - {{ volume_name }} ({{ volume_id }})"
-        - "Monthly Backup - {{ volume_name }} ({{ volume_id }})"
       ignore_errors: true
     
     - name: Show delete result
@@ -104,31 +99,19 @@
     
     - name: Create new schedule with tenant and retention info
       awx.awx.schedule:
-        name: "{{ schedule_name }}"
+        name: "Giornaliero - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})"
         unified_job_template: "Cinder Volume Backup"
-        rrule: "{{ schedule_rrule }}"
+        rrule: "DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m%d') }}T020000 RRULE:FREQ=DAILY;INTERVAL=1"
         extra_data:
           volume_id: "{{ volume_id }}"
           tenant_name: "{{ tenant_name }}"
-          backup_name: "{{ frequency }}_{{ backup_name }}"
+          backup_name: "daily_{{ backup_name }}"
           retention_days: "{{ retention_days }}"
         state: present
         controller_host: "{{ awx_host }}"
         controller_username: "{{ awx_user }}"
         controller_password: "{{ awx_password }}"
         validate_certs: "{{ awx_validate_certs }}"
-      vars:
-        schedule_name: >-
-          Giornaliero - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})
-          Settimanale - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})
-          Mensile - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})
-          {% else %}Unknown Backup - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})
-          {% endif %}
-        schedule_rrule: >-
-          {% if frequency == 'daily' %}DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m%d') }}T020000 RRULE:FREQ=DAILY;INTERVAL=1
-          {% elif frequency == 'weekly' %}DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m%d') }}T020000 RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO
-          {% elif frequency == 'monthly' %}DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m') }}01T020000 RRULE:FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=1
-          {% endif %}
       when: backup_action == "enable"
       register: schedule_result
     
@@ -144,7 +127,7 @@
           - "Schedule ID: {{ schedule_result.id | default('N/A') }}"
           - "Tenant: {{ tenant_name }}"
           - "Retention: {{ retention_days }} giorni"
-          - "Backup name format: YYYY_MM_DD_{{ frequency }}_backup_{{ tenant_name }}"
+          - "Backup name format: YYYY_MM_DD_daily_backup_{{ tenant_name }}"
       when: 
         - backup_action == "enable"
         - schedule_result is defined
@@ -161,9 +144,9 @@
           - "=============================================="
           - "Volume: {{ volume_name }} ({{ volume_id }})"
           - "Tenant: {{ tenant_name }}"
-          - "Frequenza: {{ frequency }}"
+          - "Frequenza: daily"
           - "Retention: {{ retention_days }} giorni"
-          - "Backup name format: YYYY_MM_DD_{{ frequency }}_backup_{{ tenant_name }}"
+          - "Backup name format: YYYY_MM_DD_daily_backup_{{ tenant_name }}"
           - "=============================================="
       when: backup_action == "enable"
     
