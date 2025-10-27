@@ -1,8 +1,7 @@
 ---
 # ============================================
 # Playbook AWX: Cinder Volume Backup (One-Shot)
-# Eseguito dallo schedule per fare backup automatici
-# Usa API REST con credenziali passate come extra_vars
+# Con test di connettività OpenStack
 # ============================================
 
 - name: Create Cinder Volume Backup
@@ -19,6 +18,42 @@
     os_user_domain_name: "default"
   
   tasks:
+    # =============================================
+    # 0. TEST CONNETTIVITA'
+    # =============================================
+    
+    - name: Test connectivity to OpenStack endpoint
+      uri:
+        url: "{{ os_auth_url }}"
+        method: GET
+        validate_certs: false
+        timeout: 10
+      register: connectivity_test
+      ignore_errors: true
+    
+    - name: Show connectivity result
+      debug:
+        msg:
+          - "Connectivity test result: {{ 'SUCCESS' if connectivity_test.status is defined else 'FAILED' }}"
+          - "Status: {{ connectivity_test.status | default('N/A') }}"
+          - "Error: {{ connectivity_test.msg | default('N/A') }}"
+    
+    - name: Fail if cannot reach OpenStack
+      fail:
+        msg: |
+          Cannot reach OpenStack endpoint: {{ os_auth_url }}
+          
+          Possible causes:
+          1. Firewall blocking AWX -> OpenStack connection
+          2. Wrong endpoint URL
+          3. OpenStack service not running
+          
+          Please check:
+          - Network connectivity from AWX to OpenStack
+          - Correct endpoint URL
+          - OpenStack API service status
+      when: connectivity_test.status is not defined
+    
     # =============================================
     # 1. VALIDAZIONE INPUT
     # =============================================
@@ -73,6 +108,7 @@
                   name: "{{ os_project_domain_name }}"
         status_code: 201
         validate_certs: false
+        timeout: 30
       register: auth_response
     
     - name: Set auth token and extract endpoints
@@ -110,6 +146,7 @@
           X-Auth-Token: "{{ os_token }}"
         validate_certs: false
         status_code: 200
+        timeout: 30
       register: volume_response
     
     - name: Set volume data
@@ -194,6 +231,7 @@
             force: true
         validate_certs: false
         status_code: 202
+        timeout: 30
       register: backup_create_response
     
     - name: Extract backup ID
@@ -216,6 +254,7 @@
           X-Auth-Token: "{{ os_token }}"
         validate_certs: false
         status_code: 200
+        timeout: 30
       register: backup_status_response
       until: backup_status_response.json.backup.status in ['available', 'error']
       retries: 60
@@ -242,6 +281,7 @@
           X-Auth-Token: "{{ os_token }}"
         validate_certs: false
         status_code: 200
+        timeout: 30
       register: all_backups_response
     
     - name: Filter backups for this volume only
@@ -282,6 +322,7 @@
           X-Auth-Token: "{{ os_token }}"
         validate_certs: false
         status_code: [202, 204]
+        timeout: 30
       loop: "{{ old_backups }}"
       when: old_backups | length > 0
       ignore_errors: true
