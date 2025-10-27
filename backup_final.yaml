@@ -1,20 +1,13 @@
 ---
 # ============================================
-# Playbook AWX: Manage Cinder Volume Backup Schedule
-# VERSIONE SEMPLIFICATA - Solo backup giornalieri
+# Playbook AWX: Cinder Volume Backup (One-Shot)
+# Eseguito dallo schedule per fare backup automatici
 # ============================================
 
-- name: Manage Cinder Volume Backup Schedule
+- name: Create Cinder Volume Backup
   hosts: localhost
   connection: local
   gather_facts: true
-  
-  vars:
-    awx_host: "https://services.linuxwall.it"
-    awx_user: "paolo.astorino"
-    awx_password: "gaxH=5[]zu22"
-    awx_validate_certs: false
-    retention_days: 15
   
   tasks:
     # =============================================
@@ -25,173 +18,198 @@
       assert:
         that:
           - volume_id is defined and volume_id | length > 0
-          - backup_action is defined and backup_action | length > 0
-        fail_msg: "ERROR: Missing required variables (volume_id, backup_action)"
-        success_msg: "Variables OK - volume_id: {{ volume_id }}, backup_action: {{ backup_action }}"
-    
-    - name: Validate backup_name for enable action
-      assert:
-        that:
-          - backup_name is defined and backup_name | length > 0
-        fail_msg: "ERROR: backup_name is required for enable action"
-      when: backup_action == 'enable'
+          - tenant_name is defined and tenant_name | length > 0
+          - retention_days is defined
+        fail_msg: "ERROR: Missing required variables (volume_id, tenant_name, retention_days)"
+        success_msg: "Variables OK - volume_id: {{ volume_id }}, tenant: {{ tenant_name }}"
     
     # =============================================
-    # 2. IMPOSTA DEFAULT
+    # 2. RECUPERA NOME VOLUME DA OPENSTACK (CON FALLBACK)
     # =============================================
     
-    - name: Set tenant_name from variable or environment
+    - name: Try to get volume from OpenStack
+      block:
+        - name: Get all volumes from OpenStack
+          openstack.cloud.volume_info:
+            details: true
+          register: all_volumes
+        
+        - name: Find volume by ID
+          set_fact:
+            volume_data: "{{ all_volumes.volumes | selectattr('id', 'equalto', volume_id) | first | default(None) }}"
+        
+        - name: Check if volume exists in OpenStack
+          fail:
+            msg: "Volume {{ volume_id }} not found in OpenStack"
+          when: volume_data is none
+        
+        - name: Set volume name from OpenStack
+          set_fact:
+            volume_name: "{{ volume_data.name }}"
+        
+        - name: Display success - volume found in OpenStack
+          debug:
+            msg: "✓ Volume trovato in OpenStack: {{ volume_name }}"
+      
+      rescue:
+        - name: Cinder service not available - using fallback
+          debug:
+            msg: 
+              - "⚠ Servizio Cinder non disponibile o non accessibile"
+              - "Utilizzo backup_name o volume_id come identificatore"
+        
+        - name: Set fallback volume name
+          set_fact:
+            volume_name: "{{ backup_name | default('volume_' ~ volume_id[:8]) }}"
+            volume_data:
+              id: "{{ volume_id }}"
+              name: "{{ backup_name | default('volume_' ~ volume_id[:8]) }}"
+        
+        - name: Display fallback info
+          debug:
+            msg: "✓ Utilizzo nome fallback: {{ volume_name }}"
+    
+    # =============================================
+    # 3. GENERA NOME BACKUP FINALE
+    # Format: anno_mese_giorno_nome_backup_tenant
+    # =============================================
+    
+    - name: Generate date prefix
       set_fact:
-        tenant_name: "{{ tenant_name | default(lookup('env', 'OS_PROJECT_NAME') | default('default')) }}"
+        date_prefix: "{{ ansible_date_time.year }}_{{ '%02d' | format(ansible_date_time.month | int) }}_{{ '%02d' | format(ansible_date_time.day | int) }}"
     
-    # =============================================
-    # 3. RECUPERA NOME VOLUME DA OPENSTACK
-    # =============================================
-    
-    - name: Get all volumes from OpenStack
-      openstack.cloud.volume_info:
-        details: true
-      register: all_volumes
-    
-    - name: Find volume by ID
+    - name: Clean tenant name
       set_fact:
-        volume_data: "{{ all_volumes.volumes | selectattr('id', 'equalto', volume_id) | first | default(None) }}"
+        clean_tenant_name: "{{ tenant_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
     
-    - name: Check if volume exists
-      fail:
-        msg: "Volume {{ volume_id }} not found"
-      when: volume_data is none
-    
-    - name: Set volume name
+    - name: Check if custom backup_name is provided
       set_fact:
-        volume_name: "{{ volume_data.name }}"
+        has_backup_name: "{{ backup_name is defined and backup_name | length > 0 }}"
     
-    # =============================================
-    # 4. RECUPERA SCHEDULE ESISTENTI
-    # =============================================
-    
-    - name: Get all schedules from AWX
-      uri:
-        url: "{{ awx_host }}/api/v2/schedules/"
-        method: GET
-        user: "{{ awx_user }}"
-        password: "{{ awx_password }}"
-        force_basic_auth: yes
-        validate_certs: "{{ awx_validate_certs }}"
-        return_content: yes
-      register: awx_schedules
-    
-    - name: Filter schedules for this volume
+    - name: Use custom backup name if provided
       set_fact:
-        volume_schedules: "{{ awx_schedules.json.results | selectattr('name', 'search', volume_id) | list }}"
+        clean_backup_name: "{{ backup_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
+      when: has_backup_name
     
-    - name: Filter active schedules for this volume
+    - name: Generate default backup name from volume if not provided
       set_fact:
-        active_schedules: "{{ volume_schedules | selectattr('enabled', 'equalto', true) | list }}"
+        clean_backup_name: "backup_{{ volume_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
+      when: not has_backup_name
+    
+    - name: Compose final backup name (date + name + tenant)
+      set_fact:
+        final_backup_name: "{{ date_prefix }}_{{ clean_backup_name }}_{{ clean_tenant_name }}"
     
     # =============================================
-    # 5. DISPLAY INFO
+    # 4. DISPLAY INFO
     # =============================================
     
-    - name: Log action
+    - name: Display backup info
       debug:
-        msg: 
+        msg:
           - "=============================================="
-          - "MANAGE BACKUP SCHEDULE"
+          - "INIZIO BACKUP"
           - "=============================================="
-          - "Action: {{ backup_action }}"
-          - "Volume: {{ volume_name }} ({{ volume_id }})"
+          - "Volume ID: {{ volume_id }}"
+          - "Volume Name: {{ volume_name }}"
           - "Tenant: {{ tenant_name }}"
-          - "Existing schedules: {{ volume_schedules | length }}"
-          - "Active schedules: {{ active_schedules | length }}"
+          - "---"
+          - "Nome backup finale: {{ final_backup_name }}"
+          - "  - Data: {{ date_prefix }}"
+          - "  - Nome: {{ clean_backup_name }}"
+          - "  - Tenant: {{ clean_tenant_name }}"
+          - "---"
           - "Retention: {{ retention_days }} giorni"
           - "=============================================="
     
     # =============================================
-    # 6. AZIONE: ENABLE (Crea nuovo schedule giornaliero)
+    # 5. CREA BACKUP
     # =============================================
     
-    - name: Check if active schedule already exists
-      fail:
-        msg: |
-          ERRORE: Esiste già un backup schedule attivo per questo volume!
-          Nome: {{ active_schedules[0].name }}
-          Per creare un nuovo schedule, prima disattiva o elimina quello esistente.
-      when: 
-        - backup_action == 'enable'
-        - active_schedules | length > 0
-    
-    - name: Create new daily backup schedule
-      awx.awx.schedule:
-        name: "Giornaliero - {{ backup_name }} - {{ tenant_name }} - ({{ volume_id }})"
-        unified_job_template: "Cinder Volume Backup"
-        rrule: "DTSTART;TZID=UTC:{{ lookup('pipe', 'date +%Y%m%d') }}T020000 RRULE:FREQ=DAILY;INTERVAL=1"
-        enabled: true
-        extra_data:
-          volume_id: "{{ volume_id }}"
-          tenant_name: "{{ tenant_name }}"
-          backup_name: "daily_{{ backup_name }}"
-          retention_days: "{{ retention_days }}"
+    - name: Create volume backup
+      openstack.cloud.volume_backup:
+        volume: "{{ volume_id }}"
         state: present
-        controller_host: "{{ awx_host }}"
-        controller_username: "{{ awx_user }}"
-        controller_password: "{{ awx_password }}"
-        validate_certs: "{{ awx_validate_certs }}"
-      when: backup_action == "enable"
-      register: schedule_create_result
+        force: true
+        name: "{{ final_backup_name }}"
+        description: "Backup automatico daily - Retention {{ retention_days }}gg - Tenant: {{ tenant_name }}"
+      register: backup_result
     
-    - name: Show success message (enable)
-      debug:
-        msg: 
-          - "=============================================="
-          - "✓ BACKUP SCHEDULE CREATO E ATTIVATO"
-          - "=============================================="
-          - "Schedule ID: {{ schedule_create_result.id }}"
-          - "Nome: Giornaliero - {{ backup_name }} - {{ tenant_name }}"
-          - "Volume: {{ volume_name }} ({{ volume_id }})"
-          - "Frequenza: Giornaliero (02:00 UTC)"
-          - "Retention: {{ retention_days }} giorni"
-          - "Backup name format: YYYY_MM_DD_daily_{{ backup_name }}_{{ tenant_name }}"
-          - "=============================================="
+    - name: Wait for backup to complete
+      openstack.cloud.volume_backup_info:
+        name: "{{ final_backup_name }}"
+      register: backup_status
+      until: backup_status.volume_backups[0].status in ['available', 'error']
+      retries: 60
+      delay: 10
+      when: backup_result is defined
+    
+    - name: Check backup status
+      fail:
+        msg: "Backup failed with status: {{ backup_status.volume_backups[0].status }}"
       when: 
-        - backup_action == "enable"
-        - schedule_create_result is defined
+        - backup_status is defined
+        - backup_status.volume_backups[0].status == 'error'
     
     # =============================================
-    # 7. AZIONE: DISABLE (Elimina tutti gli schedule)
+    # 6. GESTIONE RETENTION
     # =============================================
     
-    - name: Delete all schedules for this volume
-      uri:
-        url: "{{ awx_host }}/api/v2/schedules/{{ item.id }}/"
-        method: DELETE
-        user: "{{ awx_user }}"
-        password: "{{ awx_password }}"
-        force_basic_auth: yes
-        validate_certs: "{{ awx_validate_certs }}"
-        status_code: [204, 404]
-      loop: "{{ volume_schedules }}"
+    - name: Get all backups for this volume
+      openstack.cloud.volume_backup_info:
+      register: all_backups
+    
+    - name: Filter backups for this volume only
+      set_fact:
+        volume_backups: "{{ all_backups.volume_backups | selectattr('volume_id', 'equalto', volume_id) | list }}"
+    
+    - name: Sort backups by creation date (oldest first)
+      set_fact:
+        sorted_backups: "{{ volume_backups | sort(attribute='created_at') }}"
+    
+    - name: Calculate retention date
+      set_fact:
+        retention_date: "{{ (ansible_date_time.epoch | int - (retention_days | int * 86400)) | int }}"
+    
+    - name: Filter old backups to delete
+      set_fact:
+        old_backups: "{{ sorted_backups | selectattr('created_at', 'defined') | 
+                        rejectattr('created_at', 'search', '9999') | 
+                        list | 
+                        map('combine', {'created_epoch': (item.created_at | to_datetime('%Y-%m-%dT%H:%M:%S')).strftime('%s') | int}) | 
+                        selectattr('created_epoch', 'lt', retention_date | int) | 
+                        list }}"
+      vars:
+        item: "{{ sorted_backups[0] | default({}) }}"
+      when: sorted_backups | length > 0
+    
+    - name: Delete old backups
+      openstack.cloud.volume_backup:
+        name: "{{ item.id }}"
+        state: absent
+      loop: "{{ old_backups | default([]) }}"
       when: 
-        - backup_action == "disable"
-        - volume_schedules | length > 0
+        - old_backups is defined
+        - old_backups | length > 0
       ignore_errors: true
     
-    - name: Show success message (disable)
-      debug:
-        msg: 
-          - "=============================================="
-          - "✓ BACKUP SCHEDULE ELIMINATI"
-          - "=============================================="
-          - "Volume: {{ volume_name }} ({{ volume_id }})"
-          - "Schedules eliminati: {{ volume_schedules | length }}"
-          - "=============================================="
-      when: 
-        - backup_action == "disable"
-        - volume_schedules | length > 0
+    # =============================================
+    # 7. SUMMARY
+    # =============================================
     
-    - name: No schedules to delete
+    - name: Show success message
       debug:
-        msg: "Nessuno schedule trovato da eliminare per questo volume"
-      when: 
-        - backup_action == "disable"
-        - volume_schedules | length == 0
+        msg:
+          - "=============================================="
+          - "BACKUP COMPLETATO"
+          - "=============================================="
+          - "Backup Name: {{ final_backup_name }}"
+          - "Backup ID: {{ backup_result.backup.id | default('N/A') }}"
+          - "Volume: {{ volume_name }} ({{ volume_id }})"
+          - "Tenant: {{ tenant_name }}"
+          - "Status: {{ backup_status.volume_backups[0].status | default('unknown') }}"
+          - "---"
+          - "Backup totali per questo volume: {{ volume_backups | length }}"
+          - "Backup eliminati (retention): {{ old_backups | default([]) | length }}"
+          - "Retention policy: {{ retention_days }} giorni"
+          - "=============================================="
