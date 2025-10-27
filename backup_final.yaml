@@ -1,7 +1,8 @@
 ---
 # ============================================
 # Playbook AWX: Cinder Volume Backup (One-Shot)
-# Con test di connettività OpenStack
+# Eseguito dallo schedule per fare backup automatici
+# Usa API REST e credenziali AWX OpenStack
 # ============================================
 
 - name: Create Cinder Volume Backup
@@ -9,52 +10,7 @@
   connection: local
   gather_facts: true
   
-  vars:
-    # Configurazione OpenStack - valori di default
-    os_auth_url: "https://region-milano.linuxwall.it:5000"
-    os_username: "sourcesense"
-    os_password: "Sb8*lW05yD4E}n."
-    os_project_name: "awx_test"
-    os_project_domain_name: "Default"
-    os_user_domain_name: "default"
-  
   tasks:
-    # =============================================
-    # 0. TEST CONNETTIVITA'
-    # =============================================
-    
-    - name: Test connectivity to OpenStack endpoint
-      uri:
-        url: "{{ os_auth_url }}"
-        method: GET
-        validate_certs: false
-        timeout: 10
-      register: connectivity_test
-      ignore_errors: true
-    
-    - name: Show connectivity result
-      debug:
-        msg:
-          - "Connectivity test result: {{ 'SUCCESS' if connectivity_test.status is defined else 'FAILED' }}"
-          - "Status: {{ connectivity_test.status | default('N/A') }}"
-          - "Error: {{ connectivity_test.msg | default('N/A') }}"
-    
-    - name: Fail if cannot reach OpenStack
-      fail:
-        msg: |
-          Cannot reach OpenStack endpoint: {{ os_auth_url }}
-          
-          Possible causes:
-          1. Firewall blocking AWX -> OpenStack connection
-          2. Wrong endpoint URL
-          3. OpenStack service not running
-          
-          Please check:
-          - Network connectivity from AWX to OpenStack
-          - Correct endpoint URL
-          - OpenStack API service status
-      when: connectivity_test.status is not defined
-    
     # =============================================
     # 1. VALIDAZIONE INPUT
     # =============================================
@@ -65,23 +21,35 @@
           - volume_id is defined and volume_id | length > 0
           - tenant_name is defined and tenant_name | length > 0
           - retention_days is defined
-          - os_password is defined and os_password | length > 0
-        fail_msg: "ERROR: Missing required variables (volume_id, tenant_name, retention_days, os_password)"
+        fail_msg: "ERROR: Missing required variables (volume_id, tenant_name, retention_days)"
         success_msg: "Variables OK - volume_id: {{ volume_id }}, tenant: {{ tenant_name }}"
     
     # =============================================
-    # 2. DISPLAY AUTH INFO
+    # 2. CARICA CREDENZIALI DA AWX
     # =============================================
+    
+    - name: Load OpenStack credentials from AWX
+      set_fact:
+        os_auth_url: "{{ lookup('env', 'OS_AUTH_URL') }}"
+        os_username: "{{ lookup('env', 'OS_USERNAME') }}"
+        os_password: "{{ lookup('env', 'OS_PASSWORD') }}"
+        os_project_name: "{{ lookup('env', 'OS_PROJECT_NAME') }}"
+        os_project_domain_name: "{{ lookup('env', 'OS_PROJECT_DOMAIN_NAME') | default('default') }}"
+        os_user_domain_name: "{{ lookup('env', 'OS_USER_DOMAIN_NAME') | default('default') }}"
     
     - name: Display auth info
       debug:
         msg:
+          - "=============================================="
+          - "AUTENTICAZIONE OPENSTACK"
+          - "=============================================="
           - "Auth URL: {{ os_auth_url }}"
           - "Username: {{ os_username }}"
           - "Project: {{ os_project_name }}"
           - "User Domain: {{ os_user_domain_name }}"
           - "Project Domain: {{ os_project_domain_name }}"
-          - "Password provided: Yes"
+          - "Password loaded: {{ 'Yes' if os_password | length > 0 else 'No' }}"
+          - "=============================================="
     
     # =============================================
     # 3. AUTENTICAZIONE OPENSTACK
@@ -116,6 +84,10 @@
       set_fact:
         os_token: "{{ auth_response.x_subject_token }}"
         service_catalog: "{{ auth_response.json.token.catalog }}"
+    
+    - name: Display auth success
+      debug:
+        msg: "✓ Autenticazione completata - Token ricevuto"
     
     - name: Find Cinder endpoint (volumev3)
       set_fact:
