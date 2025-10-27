@@ -11,10 +11,11 @@
   
   vars:
     # Configurazione OpenStack - valori di default
-    os_auth_url: "https://region-milano.linuxwall.it:5000/v3"
+    os_auth_url: "https://region-milano.linuxwall.it:5000"
     os_username: "sourcesense"
+    os_password: "Sb8*lW05yD4E}n."
     os_project_name: "awx_test"
-    os_project_domain_name: "default"
+    os_project_domain_name: "Default"
     os_user_domain_name: "default"
   
   tasks:
