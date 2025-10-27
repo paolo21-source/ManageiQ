@@ -10,6 +10,12 @@
   connection: local
   gather_facts: true
   
+  vars:
+    # Configurazione OpenStack - modifica questi valori
+    os_auth_url: "https://region-milano.linuxwall.it:5000/v3"
+    os_project_domain_name: "Default"
+    os_user_domain_name: "Default"
+  
   tasks:
     # =============================================
     # 1. VALIDAZIONE INPUT
@@ -25,12 +31,37 @@
         success_msg: "Variables OK - volume_id: {{ volume_id }}, tenant: {{ tenant_name }}"
     
     # =============================================
-    # 2. AUTENTICAZIONE OPENSTACK
+    # 2. CARICA CREDENZIALI OPENSTACK
+    # =============================================
+    
+    - name: Get OpenStack credentials from environment
+      set_fact:
+        os_username: "{{ lookup('env', 'OS_USERNAME') }}"
+        os_password: "{{ lookup('env', 'OS_PASSWORD') }}"
+        os_project_name: "{{ lookup('env', 'OS_PROJECT_NAME') | default(tenant_name) }}"
+    
+    - name: Validate OpenStack credentials
+      assert:
+        that:
+          - os_username | length > 0
+          - os_password | length > 0
+          - os_project_name | length > 0
+        fail_msg: "ERROR: OpenStack credentials not found in environment variables"
+    
+    - name: Display auth info
+      debug:
+        msg:
+          - "Auth URL: {{ os_auth_url }}"
+          - "Project: {{ os_project_name }}"
+          - "Username: {{ os_username }}"
+    
+    # =============================================
+    # 3. AUTENTICAZIONE OPENSTACK
     # =============================================
     
     - name: Get OpenStack token
       uri:
-        url: "{{ lookup('env', 'OS_AUTH_URL') }}/auth/tokens"
+        url: "{{ os_auth_url }}/auth/tokens"
         method: POST
         body_format: json
         body:
@@ -39,15 +70,15 @@
               methods: ["password"]
               password:
                 user:
-                  name: "{{ lookup('env', 'OS_USERNAME') }}"
+                  name: "{{ os_username }}"
                   domain:
-                    name: "{{ lookup('env', 'OS_USER_DOMAIN_NAME') | default('Default') }}"
-                  password: "{{ lookup('env', 'OS_PASSWORD') }}"
+                    name: "{{ os_user_domain_name }}"
+                  password: "{{ os_password }}"
             scope:
               project:
-                name: "{{ lookup('env', 'OS_PROJECT_NAME') }}"
+                name: "{{ os_project_name }}"
                 domain:
-                  name: "{{ lookup('env', 'OS_PROJECT_DOMAIN_NAME') | default('Default') }}"
+                  name: "{{ os_project_domain_name }}"
         status_code: 201
         validate_certs: false
       register: auth_response
@@ -76,7 +107,7 @@
         msg: "✓ Cinder endpoint trovato: {{ cinder_endpoint }}"
     
     # =============================================
-    # 3. RECUPERA NOME VOLUME
+    # 4. RECUPERA NOME VOLUME
     # =============================================
     
     - name: Get volume details from Cinder API
@@ -99,7 +130,7 @@
         msg: "✓ Volume trovato: {{ volume_name }} ({{ volume_id }})"
     
     # =============================================
-    # 4. GENERA NOME BACKUP FINALE
+    # 5. GENERA NOME BACKUP FINALE
     # Format: anno_mese_giorno_nome_backup_tenant
     # =============================================
     
@@ -130,7 +161,7 @@
         final_backup_name: "{{ date_prefix }}_{{ clean_backup_name }}_{{ clean_tenant_name }}"
     
     # =============================================
-    # 5. DISPLAY INFO
+    # 6. DISPLAY INFO
     # =============================================
     
     - name: Display backup info
@@ -152,7 +183,7 @@
           - "=============================================="
     
     # =============================================
-    # 6. CREA BACKUP VIA API REST
+    # 7. CREA BACKUP VIA API REST
     # =============================================
     
     - name: Create volume backup via Cinder API
@@ -182,7 +213,7 @@
         msg: "✓ Backup creato con ID: {{ backup_id }}"
     
     # =============================================
-    # 7. ATTENDI COMPLETAMENTO BACKUP
+    # 8. ATTENDI COMPLETAMENTO BACKUP
     # =============================================
     
     - name: Wait for backup to complete
@@ -208,7 +239,7 @@
         msg: "✓ Backup completato con successo - Status: {{ backup_status_response.json.backup.status }}"
     
     # =============================================
-    # 8. GESTIONE RETENTION
+    # 9. GESTIONE RETENTION
     # =============================================
     
     - name: Get all backups via Cinder API
@@ -264,7 +295,7 @@
       ignore_errors: true
     
     # =============================================
-    # 9. SUMMARY
+    # 10. SUMMARY
     # =============================================
     
     - name: Show success message
