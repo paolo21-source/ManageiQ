@@ -10,7 +10,7 @@
   gather_facts: true
   
   vars:
-    awx_host: "https://services.xaaslab.it"
+    awx_host: "https://services.linuxwall.it"
     awx_user: "paolo.astorino"
     awx_password: "gaxH=5[]zu22"
     awx_validate_certs: false
