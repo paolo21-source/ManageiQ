@@ -31,26 +31,57 @@
         success_msg: "Variables OK"
     
     # =============================================
-    # 2. RECUPERA NOME VOLUME DA OPENSTACK
+    # 2. RECUPERA NOME VOLUME DA OPENSTACK (CON FALLBACK)
     # =============================================
     
-    - name: Get all volumes from OpenStack
-      openstack.cloud.volume_info:
-        details: true
-      register: all_volumes
+    - name: Try to get volume from OpenStack
+      block:
+        - name: Get all volumes from OpenStack
+          openstack.cloud.volume_info:
+            details: true
+          register: all_volumes
+        
+        - name: Find volume by ID
+          set_fact:
+            volume_data: "{{ all_volumes.volumes | selectattr('id', 'equalto', volume_id) | first | default(None) }}"
+        
+        - name: Check if volume exists in OpenStack
+          fail:
+            msg: "Volume {{ volume_id }} not found in OpenStack"
+          when: volume_data is none
+        
+        - name: Set volume name from OpenStack
+          set_fact:
+            volume_name: "{{ volume_data.name }}"
+        
+        - name: Display success - volume found in OpenStack
+          debug:
+            msg: "✓ Volume trovato in OpenStack: {{ volume_name }}"
+      
+      rescue:
+        - name: Cinder service not available - using fallback
+          debug:
+            msg: 
+              - "⚠ Servizio Cinder non disponibile o non accessibile"
+              - "Utilizzo volume_id come identificatore"
+        
+        - name: Set fallback volume name
+          set_fact:
+            volume_name: "volume_{{ volume_id[:8] }}"
+            volume_data:
+              id: "{{ volume_id }}"
+              name: "volume_{{ volume_id[:8] }}"
+        
+        - name: Display fallback info
+          debug:
+            msg: "✓ Utilizzo nome fallback: {{ volume_name }}"
     
-    - name: Find volume by ID
-      set_fact:
-        volume_data: "{{ all_volumes.volumes | selectattr('id', 'equalto', volume_id) | first | default(None) }}"
-    
-    - name: Check if volume exists
-      fail:
-        msg: "Volume {{ volume_id }} not found"
-      when: volume_data is none
-    
-    - name: Set volume name
-      set_fact:
-        volume_name: "{{ volume_data.name }}"
+    - name: Confirm volume info
+      debug:
+        msg: 
+          - "Volume configurato:"
+          - "  - Nome: {{ volume_name }}"
+          - "  - ID: {{ volume_id }}"
     
     # =============================================
     # 3. RECUPERA DETTAGLI SCHEDULE
