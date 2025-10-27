@@ -2,13 +2,21 @@
 # ============================================
 # Playbook AWX: Cinder Volume Backup (One-Shot)
 # Eseguito dallo schedule per fare backup automatici
-# Usa API REST e credenziali AWX OpenStack
+# Usa API REST con credenziali passate come extra_vars
 # ============================================
 
 - name: Create Cinder Volume Backup
   hosts: localhost
   connection: local
   gather_facts: true
+  
+  vars:
+    # Configurazione OpenStack - valori di default
+    os_auth_url: "https://region-milano.linuxwall.it:5000/v3"
+    os_username: "sourcesense"
+    os_project_name: "awx_test"
+    os_project_domain_name: "default"
+    os_user_domain_name: "default"
   
   tasks:
     # =============================================
@@ -21,23 +29,15 @@
           - volume_id is defined and volume_id | length > 0
           - tenant_name is defined and tenant_name | length > 0
           - retention_days is defined
-        fail_msg: "ERROR: Missing required variables (volume_id, tenant_name, retention_days)"
+          - os_password is defined and os_password | length > 0
+        fail_msg: "ERROR: Missing required variables (volume_id, tenant_name, retention_days, os_password)"
         success_msg: "Variables OK - volume_id: {{ volume_id }}, tenant: {{ tenant_name }}"
     
     # =============================================
-    # 2. CARICA CREDENZIALI OPENSTACK DA AWX
+    # 2. DISPLAY AUTH INFO
     # =============================================
     
-    - name: Load OpenStack credentials from AWX environment
-      set_fact:
-        os_auth_url: "{{ lookup('env', 'OS_AUTH_URL') | default('https://region-milano.linuxwall.it:5000/v3', true) }}"
-        os_username: "{{ lookup('env', 'OS_USERNAME') | default('sourcesense', true) }}"
-        os_password: "{{ lookup('env', 'OS_PASSWORD') }}"
-        os_project_name: "{{ lookup('env', 'OS_PROJECT_NAME') | default(tenant_name, true) }}"
-        os_project_domain_name: "{{ lookup('env', 'OS_PROJECT_DOMAIN_NAME') | default('default', true) }}"
-        os_user_domain_name: "{{ lookup('env', 'OS_USER_DOMAIN_NAME') | default('default', true) }}"
-    
-    - name: Check if credentials are loaded
+    - name: Display auth info
       debug:
         msg:
           - "Auth URL: {{ os_auth_url }}"
@@ -45,12 +45,7 @@
           - "Project: {{ os_project_name }}"
           - "User Domain: {{ os_user_domain_name }}"
           - "Project Domain: {{ os_project_domain_name }}"
-          - "Password loaded: {{ 'Yes' if os_password | length > 0 else 'No' }}"
-    
-    - name: Fail if password not found
-      fail:
-        msg: "Password not found. Ensure OpenStack credential is attached to the Job Template"
-      when: os_password | length == 0
+          - "Password provided: Yes"
     
     # =============================================
     # 3. AUTENTICAZIONE OPENSTACK
