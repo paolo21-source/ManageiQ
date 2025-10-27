@@ -1,24 +1,211 @@
 ---
-- name: Execute OpenStack Cinder Volume Backup
+# ============================================
+# Playbook AWX: Cinder Volume Backup (One-Shot)
+# Eseguito dallo schedule per fare backup automatici
+# Usa moduli OpenStack nativi come il playbook originale
+# ============================================
+
+- name: Create Cinder Volume Backup
   hosts: localhost
   connection: local
-  gather_facts: true  # ← serve per ansible_date_time
+  gather_facts: true
+  
   tasks:
-    - name: Ensure volume_id is provided
+    # =============================================
+    # 1. VALIDAZIONE INPUT
+    # =============================================
+    
+    - name: Validate required variables
       assert:
-        that: volume_id is defined and volume_id | length > 0
-        fail_msg: "ERROR: volume_id is missing or empty. Check ManageIQ → AWX integration."
-        success_msg: "Volume ID received: {{ volume_id }}"
-
-    - name: Ensure OpenStack volume backup is created
+        that:
+          - volume_id is defined and volume_id | length > 0
+          - tenant_name is defined and tenant_name | length > 0
+          - retention_days is defined
+        fail_msg: "ERROR: Missing required variables (volume_id, tenant_name, retention_days)"
+        success_msg: "Variables OK - volume_id: {{ volume_id }}, tenant: {{ tenant_name }}"
+    
+    # =============================================
+    # 2. RECUPERA NOME VOLUME (CON FALLBACK)
+    # =============================================
+    
+    - name: Try to get volume info from OpenStack
+      block:
+        - name: Get volume info
+          openstack.cloud.volume_info:
+            details: true
+          register: all_volumes
+        
+        - name: Find volume by ID
+          set_fact:
+            volume_data: "{{ all_volumes.volumes | selectattr('id', 'equalto', volume_id) | first | default(None) }}"
+        
+        - name: Set volume name from OpenStack
+          set_fact:
+            volume_name: "{{ volume_data.name }}"
+          when: volume_data is not none
+        
+        - name: Display success - volume found
+          debug:
+            msg: "✓ Volume trovato in OpenStack: {{ volume_name }}"
+      
+      rescue:
+        - name: Use fallback volume name
+          debug:
+            msg: "⚠ Impossibile recuperare nome volume da OpenStack, uso fallback"
+        
+        - name: Set fallback volume name
+          set_fact:
+            volume_name: "{{ backup_name | default('volume_' ~ volume_id[:8]) }}"
+    
+    # =============================================
+    # 3. GENERA NOME BACKUP FINALE
+    # Format: anno_mese_giorno_nome_backup_tenant
+    # =============================================
+    
+    - name: Generate date prefix
+      set_fact:
+        date_prefix: "{{ ansible_date_time.year }}_{{ '%02d' | format(ansible_date_time.month | int) }}_{{ '%02d' | format(ansible_date_time.day | int) }}"
+    
+    - name: Clean tenant name
+      set_fact:
+        clean_tenant_name: "{{ tenant_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
+    
+    - name: Check if custom backup_name is provided
+      set_fact:
+        has_backup_name: "{{ backup_name is defined and backup_name | length > 0 }}"
+    
+    - name: Use custom backup name if provided
+      set_fact:
+        clean_backup_name: "{{ backup_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
+      when: has_backup_name
+    
+    - name: Generate default backup name from volume if not provided
+      set_fact:
+        clean_backup_name: "backup_{{ volume_name | regex_replace('[^a-zA-Z0-9_-]', '_') }}"
+      when: not has_backup_name
+    
+    - name: Compose final backup name (date + name + tenant)
+      set_fact:
+        final_backup_name: "{{ date_prefix }}_{{ clean_backup_name }}_{{ clean_tenant_name }}"
+    
+    # =============================================
+    # 4. DISPLAY INFO
+    # =============================================
+    
+    - name: Display backup info
+      debug:
+        msg:
+          - "=============================================="
+          - "INIZIO BACKUP"
+          - "=============================================="
+          - "Volume ID: {{ volume_id }}"
+          - "Volume Name: {{ volume_name }}"
+          - "Tenant: {{ tenant_name }}"
+          - "---"
+          - "Nome backup finale: {{ final_backup_name }}"
+          - "  - Data: {{ date_prefix }}"
+          - "  - Nome: {{ clean_backup_name }}"
+          - "  - Tenant: {{ clean_tenant_name }}"
+          - "---"
+          - "Retention: {{ retention_days }} giorni"
+          - "=============================================="
+    
+    # =============================================
+    # 5. CREA BACKUP
+    # =============================================
+    
+    - name: Create volume backup
       openstack.cloud.volume_backup:
         volume: "{{ volume_id }}"
         state: present
         force: true
-        name: "backup-{{ volume_id }}-{{ ansible_date_time.iso8601_basic_short }}"
+        name: "{{ final_backup_name }}"
+        description: "Backup automatico daily - Retention {{ retention_days }}gg - Tenant: {{ tenant_name }}"
       register: backup_result
-
-    - name: Show backup result
+    
+    - name: Wait for backup to complete
+      openstack.cloud.volume_backup_info:
+        name: "{{ final_backup_name }}"
+      register: backup_status
+      until: backup_status.volume_backups[0].status in ['available', 'error']
+      retries: 60
+      delay: 10
+      when: backup_result is defined
+    
+    - name: Check backup status
+      fail:
+        msg: "Backup failed with status: {{ backup_status.volume_backups[0].status }}"
+      when: 
+        - backup_status is defined
+        - backup_status.volume_backups[0].status == 'error'
+    
+    - name: Display backup creation success
       debug:
-        msg: "Backup created successfully: {{ backup_result.backup.name }}"
-      when: backup_result.backup is defined
+        msg: "✓ Backup creato con successo: {{ final_backup_name }}"
+    
+    # =============================================
+    # 6. GESTIONE RETENTION
+    # =============================================
+    
+    - name: Get all backups for this volume
+      openstack.cloud.volume_backup_info:
+      register: all_backups
+    
+    - name: Filter backups for this volume only
+      set_fact:
+        volume_backups: "{{ all_backups.volume_backups | selectattr('volume_id', 'equalto', volume_id) | list }}"
+    
+    - name: Sort backups by creation date (oldest first)
+      set_fact:
+        sorted_backups: "{{ volume_backups | sort(attribute='created_at') }}"
+    
+    - name: Calculate retention date (epoch)
+      set_fact:
+        retention_timestamp: "{{ (ansible_date_time.epoch | int - (retention_days | int * 86400)) }}"
+    
+    - name: Find old backups to delete
+      set_fact:
+        old_backups: []
+    
+    - name: Identify old backups based on retention
+      set_fact:
+        old_backups: "{{ old_backups + [item] }}"
+      loop: "{{ sorted_backups }}"
+      when: 
+        - item.created_at is defined
+        - (item.created_at | to_datetime('%Y-%m-%dT%H:%M:%S.%f')).strftime('%s') | int < retention_timestamp | int
+    
+    - name: Display retention info
+      debug:
+        msg:
+          - "Backup totali per questo volume: {{ volume_backups | length }}"
+          - "Backup da eliminare (retention): {{ old_backups | length }}"
+    
+    - name: Delete old backups
+      openstack.cloud.volume_backup:
+        name: "{{ item.id }}"
+        state: absent
+      loop: "{{ old_backups }}"
+      when: old_backups | length > 0
+      ignore_errors: true
+    
+    # =============================================
+    # 7. SUMMARY
+    # =============================================
+    
+    - name: Show success message
+      debug:
+        msg:
+          - "=============================================="
+          - "✓ BACKUP COMPLETATO CON SUCCESSO"
+          - "=============================================="
+          - "Backup Name: {{ final_backup_name }}"
+          - "Backup ID: {{ backup_result.backup.id | default('N/A') }}"
+          - "Volume: {{ volume_name }} ({{ volume_id }})"
+          - "Tenant: {{ tenant_name }}"
+          - "Status: {{ backup_status.volume_backups[0].status | default('unknown') }}"
+          - "---"
+          - "Backup totali per questo volume: {{ volume_backups | length }}"
+          - "Backup eliminati (retention): {{ old_backups | length }}"
+          - "Retention policy: {{ retention_days }} giorni"
+          - "=============================================="
