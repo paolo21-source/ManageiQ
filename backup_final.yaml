@@ -28,7 +28,7 @@
     # 2. CARICA CREDENZIALI DA AWX
     # =============================================
     
-    - name: Load OpenStack credentials from AWX
+    - name: Load OpenStack credentials from AWX environment
       set_fact:
         os_auth_url: "{{ lookup('env', 'OS_AUTH_URL') }}"
         os_username: "{{ lookup('env', 'OS_USERNAME') }}"
@@ -50,6 +50,11 @@
           - "Project Domain: {{ os_project_domain_name }}"
           - "Password loaded: {{ 'Yes' if os_password | length > 0 else 'No' }}"
           - "=============================================="
+    
+    - name: Check if credentials are loaded
+      fail:
+        msg: "Credenziali OpenStack non trovate. Assicurati che la credenziale 'openstack' sia associata al Job Template"
+      when: os_password | length == 0 or os_auth_url | length == 0
     
     # =============================================
     # 3. AUTENTICAZIONE OPENSTACK
@@ -89,6 +94,10 @@
       debug:
         msg: "✓ Autenticazione completata - Token ricevuto"
     
+    # =============================================
+    # 4. TROVA ENDPOINT CINDER
+    # =============================================
+    
     - name: Find Cinder endpoint (volumev3)
       set_fact:
         cinder_endpoint: "{{ service_catalog | selectattr('type', 'equalto', 'volumev3') | map(attribute='endpoints') | flatten | selectattr('interface', 'equalto', 'public') | map(attribute='url') | first | default('') }}"
@@ -108,7 +117,7 @@
         msg: "✓ Cinder endpoint trovato: {{ cinder_endpoint }}"
     
     # =============================================
-    # 4. RECUPERA NOME VOLUME
+    # 5. RECUPERA NOME VOLUME
     # =============================================
     
     - name: Get volume details from Cinder API
@@ -132,7 +141,7 @@
         msg: "✓ Volume trovato: {{ volume_name }} ({{ volume_id }})"
     
     # =============================================
-    # 5. GENERA NOME BACKUP FINALE
+    # 6. GENERA NOME BACKUP FINALE
     # Format: anno_mese_giorno_nome_backup_tenant
     # =============================================
     
@@ -163,7 +172,7 @@
         final_backup_name: "{{ date_prefix }}_{{ clean_backup_name }}_{{ clean_tenant_name }}"
     
     # =============================================
-    # 6. DISPLAY INFO
+    # 7. DISPLAY INFO
     # =============================================
     
     - name: Display backup info
@@ -185,7 +194,7 @@
           - "=============================================="
     
     # =============================================
-    # 7. CREA BACKUP VIA API REST
+    # 8. CREA BACKUP VIA API REST
     # =============================================
     
     - name: Create volume backup via Cinder API
@@ -216,7 +225,7 @@
         msg: "✓ Backup creato con ID: {{ backup_id }}"
     
     # =============================================
-    # 8. ATTENDI COMPLETAMENTO BACKUP
+    # 9. ATTENDI COMPLETAMENTO BACKUP
     # =============================================
     
     - name: Wait for backup to complete
@@ -243,7 +252,7 @@
         msg: "✓ Backup completato con successo - Status: {{ backup_status_response.json.backup.status }}"
     
     # =============================================
-    # 9. GESTIONE RETENTION
+    # 10. GESTIONE RETENTION
     # =============================================
     
     - name: Get all backups via Cinder API
@@ -301,7 +310,7 @@
       ignore_errors: true
     
     # =============================================
-    # 10. SUMMARY
+    # 11. SUMMARY
     # =============================================
     
     - name: Show success message
