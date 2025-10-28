@@ -281,7 +281,7 @@
             pool: "{{ pool_name }}"
             type: "{{ monitor_type | default('TCP') | upper }}"
             delay: "{{ monitor_delay | default(5) | int }}"
-            timeout: "{{ monitor_timeout | default(5) | int }}"
+            health_monitor_timeout: "{{ monitor_timeout | default(5) | int }}"
             max_retries: "{{ monitor_max_retries | default(3) | int }}"
             max_retries_down: "{{ monitor_max_retries_down | default(3) | int }}"
             http_method: "{{ monitor_http_method | default(omit) }}"
