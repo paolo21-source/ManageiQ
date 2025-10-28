@@ -39,6 +39,34 @@
           Richieste: lb_name, lb_subnet, listener_port
 
     # ========================================
+    # NOTIFICA 1: INIZIO CREAZIONE
+    # ========================================
+    - name: Send start notification to ManageIQ
+      uri:
+        url: "{{ manageiq_notification_url }}"
+        method: POST
+        headers:
+          X-Auth-Token: "{{ manageiq_auth_token }}"
+          Content-Type: application/json
+        body:
+          action: "create"
+          resource:
+            level: "info"
+            message: "🚀 Avvio creazione Load Balancer L4 '{{ lb_name }}' | Subnet: {{ lb_subnet }} | Listener: {{ listener_protocol }}:{{ listener_port }}"
+            subject_type: "User"
+            subject_id: "{{ manageiq_user_id }}"
+        body_format: json
+        status_code: 200
+        timeout: 10
+      delegate_to: localhost
+      when: 
+        - manageiq_notification_url is defined
+        - manageiq_auth_token is defined
+        - manageiq_user_id is defined
+      run_once: true
+      ignore_errors: yes
+
+    # ========================================
     # LOGGING CONFIGURATION
     # ========================================
     - name: Log initial configuration
@@ -129,6 +157,34 @@
         msg: "✅ Load Balancer '{{ lb_name }}' creato! ID: {{ lb_id }}, VIP: {{ lb_vip_address }}"
 
     # ========================================
+    # NOTIFICA 2: LOAD BALANCER CREATO
+    # ========================================
+    - name: Send Load Balancer created notification
+      uri:
+        url: "{{ manageiq_notification_url }}"
+        method: POST
+        headers:
+          X-Auth-Token: "{{ manageiq_auth_token }}"
+          Content-Type: application/json
+        body:
+          action: "create"
+          resource:
+            level: "info"
+            message: "✅ Load Balancer '{{ lb_name }}' creato | VIP: {{ lb_vip_address }} | ID: {{ lb_id }}"
+            subject_type: "User"
+            subject_id: "{{ manageiq_user_id }}"
+        body_format: json
+        status_code: 200
+        timeout: 10
+      delegate_to: localhost
+      when: 
+        - manageiq_notification_url is defined
+        - manageiq_auth_token is defined
+        - manageiq_user_id is defined
+      run_once: true
+      ignore_errors: yes
+
+    # ========================================
     # CREATE LISTENER (Always)
     # ========================================
     - name: Create Listener
@@ -185,6 +241,34 @@
         - name: Log allowed CIDRs result
           debug:
             msg: "{{ 'ℹ️  Allowed CIDRs configurati' if listener_cidrs_set is success else '⚠️  Allowed CIDRs non supportato' }}"
+
+    # ========================================
+    # NOTIFICA 3: LISTENER CREATO
+    # ========================================
+    - name: Send Listener created notification
+      uri:
+        url: "{{ manageiq_notification_url }}"
+        method: POST
+        headers:
+          X-Auth-Token: "{{ manageiq_auth_token }}"
+          Content-Type: application/json
+        body:
+          action: "create"
+          resource:
+            level: "info"
+            message: "✅ Listener '{{ listener_name }}' configurato | Protocollo: {{ listener_protocol }} | Porta: {{ listener_port }}"
+            subject_type: "User"
+            subject_id: "{{ manageiq_user_id }}"
+        body_format: json
+        status_code: 200
+        timeout: 10
+      delegate_to: localhost
+      when: 
+        - manageiq_notification_url is defined
+        - manageiq_auth_token is defined
+        - manageiq_user_id is defined
+      run_once: true
+      ignore_errors: yes
 
     # ========================================
     # CREATE POOL (Always)
@@ -263,6 +347,35 @@
             msg: "✅ Aggiunti {{ pool_members_list | default([]) | length }} membri al pool '{{ pool_name }}'"
           when: pool_members_list is defined
 
+        # ========================================
+        # NOTIFICA 4: POOL MEMBERS AGGIUNTI
+        # ========================================
+        - name: Send Pool Members notification
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "create"
+              resource:
+                level: "info"
+                message: "✅ Pool '{{ pool_name }}' configurato | Algoritmo: {{ pool_algorithm }} | Membri: {{ pool_members_list | default([]) | length }}"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+          delegate_to: localhost
+          when: 
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
+            - pool_members_list is defined
+          run_once: true
+          ignore_errors: yes
+
     - name: Log pool without members
       when: 
         - backend_servers is not defined or backend_servers | length == 0
@@ -275,6 +388,14 @@
     - name: Create Health Monitor block
       when: create_health_monitor | bool
       block:
+        - name: Validate monitor parameters
+          assert:
+            that:
+              - monitor_type is defined
+              - monitor_delay is defined
+              - monitor_timeout is defined
+            fail_msg: "Monitor parameters missing"
+        
         - name: Create Health Monitor
           openstack.cloud.lb_health_monitor:
             name: "{{ monitor_name }}"
@@ -295,6 +416,34 @@
         - name: Log Health Monitor creation
           debug:
             msg: "✅ Health Monitor '{{ monitor_name }}' creato! Tipo: {{ monitor_type | default('TCP') }}"
+
+        # ========================================
+        # NOTIFICA 5: HEALTH MONITOR CREATO
+        # ========================================
+        - name: Send Health Monitor notification
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "create"
+              resource:
+                level: "info"
+                message: "✅ Health Monitor '{{ monitor_name }}' configurato | Tipo: {{ monitor_type | default('TCP') }} | Delay: {{ monitor_delay | default(5) }}s | Timeout: {{ monitor_timeout | default(5) }}s"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+          delegate_to: localhost
+          when: 
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
+          run_once: true
+          ignore_errors: yes
 
     # ========================================
     # FLOATING IP MANAGEMENT (Optional)
@@ -325,6 +474,34 @@
         - name: Log Floating IP assignment
           debug:
             msg: "✅ Floating IP {{ lb_floating_ip }} assegnato al Load Balancer"
+
+        # ========================================
+        # NOTIFICA 6: FLOATING IP ASSEGNATO
+        # ========================================
+        - name: Send Floating IP notification
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "create"
+              resource:
+                level: "info"
+                message: "✅ Floating IP {{ lb_floating_ip }} assegnato al Load Balancer '{{ lb_name }}'"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+          delegate_to: localhost
+          when: 
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
+          run_once: true
+          ignore_errors: yes
 
     # ========================================
     # FINAL SUMMARY
@@ -442,10 +619,62 @@
           ╚═══════════════════════════════════════════════════════════════════╝
 
     # ========================================
-    # ERROR HANDLING
+    # NOTIFICA 7: SUCCESSO FINALE
     # ========================================
+    - name: Send final success notification to ManageIQ
+      uri:
+        url: "{{ manageiq_notification_url }}"
+        method: POST
+        headers:
+          X-Auth-Token: "{{ manageiq_auth_token }}"
+          Content-Type: application/json
+        body:
+          action: "create"
+          resource:
+            level: "success"
+            message: "✅ Load Balancer L4 '{{ lb_name }}' completato con successo! | VIP: {{ lb_vip_address }}{% if lb_floating_ip is defined %} | Floating IP: {{ lb_floating_ip }}{% endif %} | Listener: {{ listener_protocol }}:{{ listener_port }} | Pool: {{ pool_algorithm }}{% if pool_members_list is defined %} ({{ pool_members_list | length }} backend){% else %} (vuoto){% endif %}{% if create_health_monitor | bool %} | Health Monitor: {{ monitor_type | default('TCP') }}{% endif %}"
+            subject_type: "User"
+            subject_id: "{{ manageiq_user_id }}"
+        body_format: json
+        status_code: 200
+        timeout: 10
+      delegate_to: localhost
+      when: 
+        - manageiq_notification_url is defined
+        - manageiq_auth_token is defined
+        - manageiq_user_id is defined
+      run_once: true
+      ignore_errors: yes
+
+  rescue:
+    # ========================================
+    # NOTIFICA ERRORE IN CASO DI FALLIMENTO
+    # ========================================
+    - name: Send error notification to ManageIQ
+      uri:
+        url: "{{ manageiq_notification_url }}"
+        method: POST
+        headers:
+          X-Auth-Token: "{{ manageiq_auth_token }}"
+          Content-Type: application/json
+        body:
+          action: "create"
+          resource:
+            level: "error"
+            message: "❌ Creazione Load Balancer L4 '{{ lb_name }}' fallita! | Errore durante: {{ ansible_failed_task.name | default('operazione sconosciuta') }} | Dettagli: {{ ansible_failed_result.msg | default('N/A') }}"
+            subject_type: "User"
+            subject_id: "{{ manageiq_user_id }}"
+        body_format: json
+        status_code: 200
+        timeout: 10
+      delegate_to: localhost
+      when: 
+        - manageiq_notification_url is defined
+        - manageiq_auth_token is defined
+        - manageiq_user_id is defined
+      ignore_errors: yes
+
     - name: Cleanup on failure
-      when: ansible_failed_result is defined
       block:
         - name: Remove partially created resources
           openstack.cloud.loadbalancer:
@@ -457,3 +686,7 @@
         - name: Log cleanup
           debug:
             msg: "⚠️  Errore rilevato. Risorse parzialmente create sono state eliminate."
+
+    - name: Fail the playbook
+      fail:
+        msg: "Creazione Load Balancer L4 fallita durante: {{ ansible_failed_task.name | default('operazione sconosciuta') }}"
