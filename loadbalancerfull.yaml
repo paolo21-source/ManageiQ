@@ -16,9 +16,9 @@
     pool_protocol: "{{ pool_protocol | default('TCP') }}"
     pool_algorithm: "{{ pool_algorithm | default('ROUND_ROBIN') }}"
     
-    # Feature flags
-    create_listener: "{{ create_listener | default(true) }}"
-    create_pool: "{{ create_pool | default(true) }}"
+    # Feature flags (listener e pool sempre true)
+    create_listener: true
+    create_pool: true
     create_health_monitor: "{{ create_health_monitor | default(true) }}"
   
   tasks:
@@ -31,18 +31,12 @@
           - lb_name is defined
           - lb_name | length > 0
           - lb_subnet is defined
-        fail_msg: |
-          ❌ ERRORE: Variabili richieste mancanti!
-          Richieste: lb_name, lb_subnet
-
-    - name: Validate listener variables (if enabled)
-      assert:
-        that:
           - listener_port is defined
           - listener_port | int > 0
           - listener_port | int < 65536
-        fail_msg: "❌ ERRORE: listener_port deve essere tra 1 e 65535"
-      when: create_listener | bool
+        fail_msg: |
+          ❌ ERRORE: Variabili richieste mancanti!
+          Richieste: lb_name, lb_subnet, listener_port
 
     # ========================================
     # LOGGING CONFIGURATION
@@ -54,7 +48,7 @@
           ║     CONFIGURAZIONE LOAD BALANCER L4 - OPENSTACK      ║
           ╚═══════════════════════════════════════════════════════╝
           
-          📋 LOAD BALANCER DETAILS:
+          📋 LOAD BALANCER:
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           Nome:                  {{ lb_name }}
           IP Address:            {{ lb_ip_address | default('Auto-assign') }}
@@ -64,17 +58,37 @@
           
           🎧 LISTENER:
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          Crea Listener:         {{ create_listener }}
-          {% if create_listener | bool %}
+          Nome:                  {{ listener_name }}
           Protocollo:            {{ listener_protocol }}
-          Porta:                 {{ listener_port | default('N/A') }}
-          {% endif %}
+          Porta:                 {{ listener_port }}
+          Client Data Timeout:   {{ listener_client_data_timeout | default(50000) }}ms
+          Member Data Timeout:   {{ listener_member_data_timeout | default(50000) }}ms
           
           🏊 POOL:
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          Crea Pool:             {{ create_pool }}
-          {% if create_pool | bool %}
+          Nome:                  {{ pool_name }}
+          Protocollo:            {{ pool_protocol }}
           Algoritmo:             {{ pool_algorithm }}
+          Session Persistence:   {{ pool_session_persistence | default('None') }}
+          
+          🖥️  BACKEND SERVERS:
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          Backend Servers:       {{ backend_servers | default('Nessuno - pool vuoto') }}
+          
+          💓 HEALTH MONITOR:
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          Crea Monitor:          {{ create_health_monitor }}
+          {% if create_health_monitor | bool %}
+          Tipo:                  {{ monitor_type | default('TCP') }}
+          Delay:                 {{ monitor_delay | default(5) }}s
+          Timeout:               {{ monitor_timeout | default(5) }}s
+          {% endif %}
+          
+          🌐 FLOATING IP:
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          Assegna FIP:           {{ assign_floating_ip | default(false) }}
+          {% if assign_floating_ip | default(false) | bool %}
+          Network:               {{ floating_ip_network | default('external_pub_vlan20') }}
           {% endif %}
 
     # ========================================
@@ -115,90 +129,119 @@
         msg: "✅ Load Balancer '{{ lb_name }}' creato! ID: {{ lb_id }}, VIP: {{ lb_vip_address }}"
 
     # ========================================
-    # CREATE LISTENER (Optional)
+    # CREATE LISTENER (Always)
     # ========================================
-    - name: Create Listener block
-      when: create_listener | bool
+    - name: Create Listener
+      openstack.cloud.lb_listener:
+        name: "{{ listener_name }}"
+        load_balancer: "{{ lb_name }}"
+        protocol: "{{ listener_protocol | upper }}"
+        protocol_port: "{{ listener_port | int }}"
+        description: "{{ listener_description | default(omit) }}"
+        timeout_client_data: "{{ listener_client_data_timeout | default(50000) | int }}"
+        timeout_member_data: "{{ listener_member_data_timeout | default(50000) | int }}"
+        is_admin_state_up: true
+        state: present
+        wait: yes
+        timeout: 120
+      register: listener_created
+
+    - name: Log Listener creation
+      debug:
+        msg: "✅ Listener '{{ listener_name }}' creato! Protocollo: {{ listener_protocol }}, Porta: {{ listener_port }}"
+
+    # ========================================
+    # CONFIGURE LISTENER ADVANCED SETTINGS (Optional via CLI)
+    # ========================================
+    - name: Configure Listener connection limit
+      when: 
+        - listener_connection_limit is defined
+        - listener_connection_limit | int != -1
       block:
-        - name: Create Listener
-          openstack.cloud.lb_listener:
-            name: "{{ listener_name }}"
-            loadbalancer: "{{ lb_name }}"
-            protocol: "{{ listener_protocol | upper }}"
-            protocol_port: "{{ listener_port | int }}"
-            description: "{{ listener_description | default(omit) }}"
-            connection_limit: "{{ listener_connection_limit | default(-1) | int }}"
-            timeout_client_data: "{{ listener_client_data_timeout | default(50000) | int }}"
-            timeout_member_connect: "{{ listener_member_connect_timeout | default(5000) | int }}"
-            timeout_member_data: "{{ listener_member_data_timeout | default(50000) | int }}"
-            timeout_tcp_inspect: "{{ listener_tcp_inspect_timeout | default(0) | int }}"
-            allowed_cidrs: "{{ listener_allowed_cidrs.split(',') if listener_allowed_cidrs is defined else omit }}"
-            state: present
-            wait: yes
-            timeout: 120
-          register: listener_created
-
-        - name: Log Listener creation
+        - name: Set connection limit on listener
+          command: >
+            openstack loadbalancer listener set {{ listener_name }}
+            --connection-limit {{ listener_connection_limit | int }}
+          register: listener_limit_set
+          ignore_errors: yes
+        
+        - name: Log connection limit result
           debug:
-            msg: "✅ Listener '{{ listener_name }}' creato! Protocollo: {{ listener_protocol }}, Porta: {{ listener_port }}"
+            msg: "{{ 'ℹ️  Connection limit configurato' if listener_limit_set is success else '⚠️  Connection limit non supportato' }}"
 
-    # ========================================
-    # CREATE POOL (Optional)
-    # ========================================
-    - name: Create Pool block
-      when: create_pool | bool
+    - name: Configure Listener allowed CIDRs
+      when: 
+        - listener_allowed_cidrs is defined
+        - listener_allowed_cidrs != '0.0.0.0/0'
+        - listener_allowed_cidrs | length > 0
       block:
-        - name: Create Pool
-          openstack.cloud.lb_pool:
-            name: "{{ pool_name }}"
-            listener: "{{ listener_name if create_listener | bool else omit }}"
-            loadbalancer: "{{ lb_name if not (create_listener | bool) else omit }}"
-            protocol: "{{ pool_protocol | upper }}"
-            lb_algorithm: "{{ pool_algorithm }}"
-            description: "{{ pool_description | default(omit) }}"
-            state: present
-            wait: yes
-            timeout: 120
-          register: pool_created
-
-        - name: Log Pool creation
+        - name: Set allowed CIDRs on listener
+          command: >
+            openstack loadbalancer listener set {{ listener_name }}
+            --allowed-cidr {{ listener_allowed_cidrs }}
+          register: listener_cidrs_set
+          ignore_errors: yes
+        
+        - name: Log allowed CIDRs result
           debug:
-            msg: "✅ Pool '{{ pool_name }}' creato! Algoritmo: {{ pool_algorithm }}"
-
-        # Session Persistence (se specificato e diverso da None)
-        - name: Configure Session Persistence
-          when: 
-            - pool_session_persistence is defined
-            - pool_session_persistence != 'None'
-          block:
-            - name: Set session persistence on pool
-              command: >
-                openstack loadbalancer pool set {{ pool_name }}
-                --session-persistence type={{ pool_session_persistence }}
-              register: persistence_set
-            
-            - name: Log session persistence
-              debug:
-                msg: "✅ Session Persistence configurata: {{ pool_session_persistence }}"
+            msg: "{{ 'ℹ️  Allowed CIDRs configurati' if listener_cidrs_set is success else '⚠️  Allowed CIDRs non supportato' }}"
 
     # ========================================
-    # PARSE AND ADD POOL MEMBERS
+    # CREATE POOL (Always)
+    # ========================================
+    - name: Create Pool
+      openstack.cloud.lb_pool:
+        name: "{{ pool_name }}"
+        listener: "{{ listener_name }}"
+        protocol: "{{ pool_protocol | upper }}"
+        lb_algorithm: "{{ pool_algorithm }}"
+        description: "{{ pool_description | default(omit) }}"
+        state: present
+        wait: yes
+        timeout: 120
+      register: pool_created
+
+    - name: Log Pool creation
+      debug:
+        msg: "✅ Pool '{{ pool_name }}' creato! Algoritmo: {{ pool_algorithm }}"
+
+    # Session Persistence (se specificato e diverso da None)
+    - name: Configure Session Persistence
+      when: 
+        - pool_session_persistence is defined
+        - pool_session_persistence != 'None'
+        - pool_session_persistence | length > 0
+      block:
+        - name: Set session persistence on pool
+          command: >
+            openstack loadbalancer pool set {{ pool_name }}
+            --session-persistence type={{ pool_session_persistence }}
+          register: persistence_set
+          ignore_errors: yes
+        
+        - name: Log session persistence result
+          debug:
+            msg: "{{ '✅ Session Persistence configurata: ' + pool_session_persistence if persistence_set is success else '⚠️  Session Persistence non configurata' }}"
+
+    # ========================================
+    # PARSE AND ADD POOL MEMBERS (Optional - 0 to N)
     # ========================================
     - name: Add Pool Members block
       when: 
-        - create_pool | bool
         - backend_servers is defined
         - backend_servers | length > 0
       block:
         - name: Parse backend servers string
           set_fact:
-            parsed_members: "{{ backend_servers.split(',') }}"
+            parsed_members: "{{ backend_servers.split(',') | map('trim') | list }}"
 
         - name: Create pool members list
           set_fact:
-            pool_members_list: "{{ pool_members_list | default([]) + [{'address': item.split(':')[0], 'protocol_port': item.split(':')[1] | int}] }}"
+            pool_members_list: "{{ pool_members_list | default([]) + [{'address': item.split(':')[0] | trim, 'protocol_port': item.split(':')[1] | trim | int}] }}"
           loop: "{{ parsed_members }}"
-          when: "':' in item"
+          when: 
+            - item | length > 0
+            - "':' in item"
 
         - name: Add members to pool
           openstack.cloud.lb_member:
@@ -211,20 +254,26 @@
             state: present
             wait: yes
             timeout: 120
-          loop: "{{ pool_members_list }}"
+          loop: "{{ pool_members_list | default([]) }}"
           register: members_added
+          when: pool_members_list is defined
 
         - name: Log members added
           debug:
-            msg: "✅ Aggiunti {{ pool_members_list | length }} membri al pool '{{ pool_name }}'"
+            msg: "✅ Aggiunti {{ pool_members_list | default([]) | length }} membri al pool '{{ pool_name }}'"
+          when: pool_members_list is defined
+
+    - name: Log pool without members
+      when: 
+        - backend_servers is not defined or backend_servers | length == 0
+      debug:
+        msg: "ℹ️  Pool creato senza membri. Potrai aggiungerne in seguito tramite OpenStack."
 
     # ========================================
     # CREATE HEALTH MONITOR (Optional)
     # ========================================
     - name: Create Health Monitor block
-      when: 
-        - create_health_monitor | bool
-        - create_pool | bool
+      when: create_health_monitor | bool
       block:
         - name: Create Health Monitor
           openstack.cloud.lb_health_monitor:
@@ -295,18 +344,18 @@
           🆔 ID:                   {{ lb_id }}
           🔒 VIP Interno:          {{ lb_vip_address }}
           🌐 Floating IP:          {{ lb_floating_ip }}
-          🚪 Porta:                {{ listener_port | default('N/A') }}
-          🎯 Protocollo:           {{ listener_protocol if create_listener | bool else 'N/A' }}
-          ⚖️  Algoritmo:            {{ pool_algorithm if create_pool | bool else 'N/A' }}
+          🚪 Porta:                {{ listener_port }}
+          🎯 Protocollo:           {{ listener_protocol }}
+          ⚖️  Algoritmo:            {{ pool_algorithm }}
           
           🖥️  BACKEND SERVERS:
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          {% if pool_members_list is defined %}
+          {% if pool_members_list is defined and pool_members_list | length > 0 %}
           {% for member in pool_members_list %}
           {{ loop.index }}. {{ member.address }}:{{ member.protocol_port }}
           {% endfor %}
           {% else %}
-          Nessun membro configurato
+          Nessun membro configurato (pool vuoto)
           {% endif %}
           
           💓 HEALTH MONITOR:
@@ -314,7 +363,23 @@
           Stato:                  {{ 'Abilitato' if create_health_monitor | bool else 'Disabilitato' }}
           {% if create_health_monitor | bool %}
           Tipo:                   {{ monitor_type | default('TCP') }}
+          Intervallo:             {{ monitor_delay | default(5) }}s
+          Timeout:                {{ monitor_timeout | default(5) }}s
           {% endif %}
+          
+          🔗 COMANDI UTILI:
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          # Verifica stato:
+          openstack loadbalancer show {{ lb_id }}
+          
+          # Test connettività:
+          curl http://{{ lb_floating_ip }}:{{ listener_port }}
+          
+          # Verifica membri pool:
+          openstack loadbalancer member list {{ pool_name }}
+          
+          # Aggiungi un nuovo membro:
+          openstack loadbalancer member create --address <IP> --protocol-port <PORT> {{ pool_name }}
           
           ╚═══════════════════════════════════════════════════════════════════╝
 
@@ -332,18 +397,18 @@
           📛 Nome:                 {{ lb_name }}
           🆔 ID:                   {{ lb_id }}
           🔒 VIP Interno:          {{ lb_vip_address }}
-          🚪 Porta:                {{ listener_port | default('N/A') }}
-          🎯 Protocollo:           {{ listener_protocol if create_listener | bool else 'N/A' }}
-          ⚖️  Algoritmo:            {{ pool_algorithm if create_pool | bool else 'N/A' }}
+          🚪 Porta:                {{ listener_port }}
+          🎯 Protocollo:           {{ listener_protocol }}
+          ⚖️  Algoritmo:            {{ pool_algorithm }}
           
           🖥️  BACKEND SERVERS:
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          {% if pool_members_list is defined %}
+          {% if pool_members_list is defined and pool_members_list | length > 0 %}
           {% for member in pool_members_list %}
           {{ loop.index }}. {{ member.address }}:{{ member.protocol_port }}
           {% endfor %}
           {% else %}
-          Nessun membro configurato
+          Nessun membro configurato (pool vuoto)
           {% endif %}
           
           💓 HEALTH MONITOR:
@@ -351,6 +416,44 @@
           Stato:                  {{ 'Abilitato' if create_health_monitor | bool else 'Disabilitato' }}
           {% if create_health_monitor | bool %}
           Tipo:                   {{ monitor_type | default('TCP') }}
+          Intervallo:             {{ monitor_delay | default(5) }}s
+          Timeout:                {{ monitor_timeout | default(5) }}s
           {% endif %}
           
+          ⚠️  NOTA: Per accedere dall'esterno, assegna un Floating IP al VIP {{ lb_vip_address }}
+          
+          🔗 COMANDI UTILI:
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          # Verifica stato:
+          openstack loadbalancer show {{ lb_id }}
+          
+          # Verifica listener:
+          openstack loadbalancer listener show {{ listener_name }}
+          
+          # Verifica membri pool:
+          openstack loadbalancer member list {{ pool_name }}
+          
+          # Aggiungi un nuovo membro:
+          openstack loadbalancer member create --address <IP> --protocol-port <PORT> {{ pool_name }}
+          
+          # Assegna Floating IP manualmente:
+          openstack floating ip create --port {{ lb_vip_port_id }} external_pub_vlan20
+          
           ╚═══════════════════════════════════════════════════════════════════╝
+
+    # ========================================
+    # ERROR HANDLING
+    # ========================================
+    - name: Cleanup on failure
+      when: ansible_failed_result is defined
+      block:
+        - name: Remove partially created resources
+          openstack.cloud.loadbalancer:
+            name: "{{ lb_name }}"
+            state: absent
+            wait: yes
+          ignore_errors: yes
+
+        - name: Log cleanup
+          debug:
+            msg: "⚠️  Errore rilevato. Risorse parzialmente create sono state eliminate."
