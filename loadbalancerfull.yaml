@@ -39,9 +39,7 @@
               - listener_port is defined
               - listener_port | int > 0
               - listener_port | int < 65536
-            fail_msg: |
-               ERRORE: Variabili richieste mancanti!
-              Richieste: lb_name, lb_subnet, listener_port
+            fail_msg: "ERRORE - Variabili richieste mancanti: lb_name, lb_subnet, listener_port"
 
         # ========================================
         # NOTIFICA 1: INIZIO CREAZIONE
@@ -57,7 +55,7 @@
               action: "create"
               resource:
                 level: "info"
-                message: " Avvio creazione Load Balancer L4 '{{ lb_name }}' | Subnet: {{ lb_subnet }} | Listener: {{ listener_protocol }}:{{ listener_port }}"
+                message: "Avvio creazione Load Balancer L4 {{ lb_name }} - Subnet {{ lb_subnet }} - Listener {{ listener_protocol }}:{{ listener_port }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -76,30 +74,15 @@
         # ========================================
         - name: Log initial configuration
           debug:
-            msg: |
-              ╔═══════════════════════════════════════════════════════╗
-              ║     CONFIGURAZIONE LOAD BALANCER L4 - OPENSTACK      ║
-              ╚═══════════════════════════════════════════════════════╝
-              
-               LOAD BALANCER:
-              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              Nome:                  {{ lb_name }}
-              IP Address:            {{ lb_ip_address | default('Auto-assign') }}
-              Subnet VIP:            {{ lb_subnet }}
-              
-               LISTENER:
-              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              Protocollo:            {{ listener_protocol }}
-              Porta:                 {{ listener_port }}
-              
-               POOL:
-              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              Algoritmo:             {{ pool_algorithm }}
-              Session Persistence:   {{ pool_session_persistence | default('None') }}
-              
-                BACKEND SERVERS:
-              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              Backend Servers:       {{ backend_servers | default('Nessuno - pool vuoto') }}
+            msg:
+              - "=========================================="
+              - "CONFIGURAZIONE LOAD BALANCER L4"
+              - "=========================================="
+              - "Nome: {{ lb_name }}"
+              - "Subnet VIP: {{ lb_subnet }}"
+              - "Listener: {{ listener_protocol }}:{{ listener_port }}"
+              - "Pool Algorithm: {{ pool_algorithm }}"
+              - "Backend Servers: {{ backend_servers | default('Nessuno - pool vuoto') }}"
 
         # ========================================
         # OPTIONAL CLEANUP
@@ -136,7 +119,7 @@
 
         - name: Log Load Balancer creation
           debug:
-            msg: " Load Balancer '{{ lb_name }}' creato! ID: {{ lb_id }}, VIP: {{ lb_vip_address }}"
+            msg: "Load Balancer {{ lb_name }} creato - ID: {{ lb_id }} - VIP: {{ lb_vip_address }}"
 
         # ========================================
         # NOTIFICA 2: LOAD BALANCER CREATO
@@ -152,7 +135,7 @@
               action: "create"
               resource:
                 level: "info"
-                message: " Load Balancer '{{ lb_name }}' creato | VIP: {{ lb_vip_address }} | ID: {{ lb_id }}"
+                message: "Load Balancer {{ lb_name }} creato - VIP {{ lb_vip_address }} - ID {{ lb_id }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -186,7 +169,7 @@
 
         - name: Log Listener creation
           debug:
-            msg: " Listener '{{ listener_name }}' creato! Protocollo: {{ listener_protocol }}, Porta: {{ listener_port }}"
+            msg: "Listener {{ listener_name }} creato - Protocollo {{ listener_protocol }} - Porta {{ listener_port }}"
 
         # ========================================
         # NOTIFICA 3: LISTENER CREATO
@@ -202,7 +185,7 @@
               action: "create"
               resource:
                 level: "info"
-                message: " Listener '{{ listener_name }}' configurato | Protocollo: {{ listener_protocol }} | Porta: {{ listener_port }}"
+                message: "Listener {{ listener_name }} configurato - Protocollo {{ listener_protocol }} - Porta {{ listener_port }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -256,7 +239,7 @@
 
         - name: Log Pool creation
           debug:
-            msg: " Pool '{{ pool_name }}' creato! Algoritmo: {{ pool_algorithm }}{% if pool_session_persistence is defined and pool_session_persistence != 'None' and pool_session_persistence | length > 0 %} | Session Persistence: {{ pool_session_persistence }}{% endif %}"
+            msg: "Pool {{ pool_name }} creato - Algoritmo {{ pool_algorithm }}"
 
         # ========================================
         # PARSE AND ADD POOL MEMBERS (Optional - 0 to N)
@@ -295,7 +278,7 @@
 
             - name: Log members added
               debug:
-                msg: " Aggiunti {{ pool_members_list | default([]) | length }} membri al pool '{{ pool_name }}'"
+                msg: "Aggiunti {{ pool_members_list | default([]) | length }} membri al pool {{ pool_name }}"
               when: pool_members_list is defined
 
             # ========================================
@@ -312,7 +295,7 @@
                   action: "create"
                   resource:
                     level: "info"
-                    message: " Pool '{{ pool_name }}' configurato | Algoritmo: {{ pool_algorithm }} | Membri: {{ pool_members_list | default([]) | length }}{% if pool_session_persistence is defined and pool_session_persistence != 'None' %} | Session Persistence: {{ pool_session_persistence }}{% endif %}"
+                    message: "Pool {{ pool_name }} configurato - Algoritmo {{ pool_algorithm }} - Membri {{ pool_members_list | default([]) | length }}"
                     subject_type: "User"
                     subject_id: "{{ manageiq_user_id }}"
                 body_format: json
@@ -331,7 +314,7 @@
           when: 
             - backend_servers is not defined or backend_servers | length == 0
           debug:
-            msg: "ℹ️  Pool creato senza membri. Potrai aggiungerne in seguito tramite OpenStack."
+            msg: "Pool creato senza membri - Potrai aggiungerne in seguito"
 
         # ========================================
         # CREATE HEALTH MONITOR (Optional)
@@ -366,7 +349,7 @@
 
             - name: Log Health Monitor creation
               debug:
-                msg: " Health Monitor '{{ monitor_name }}' creato! Tipo: {{ monitor_type | default('TCP') }}"
+                msg: "Health Monitor {{ monitor_name }} creato - Tipo {{ monitor_type | default('TCP') }}"
 
             # ========================================
             # NOTIFICA 5: HEALTH MONITOR CREATO
@@ -382,7 +365,7 @@
                   action: "create"
                   resource:
                     level: "info"
-                    message: " Health Monitor '{{ monitor_name }}' configurato | Tipo: {{ monitor_type | default('TCP') }} | Delay: {{ monitor_delay | default(5) }}s"
+                    message: "Health Monitor {{ monitor_name }} configurato - Tipo {{ monitor_type | default('TCP') }} - Delay {{ monitor_delay | default(5) }}s"
                     subject_type: "User"
                     subject_id: "{{ manageiq_user_id }}"
                 body_format: json
@@ -424,7 +407,7 @@
 
             - name: Log Floating IP assignment
               debug:
-                msg: " Floating IP {{ lb_floating_ip }} assegnato al Load Balancer"
+                msg: "Floating IP {{ lb_floating_ip }} assegnato al Load Balancer"
 
             # ========================================
             # NOTIFICA 6: FLOATING IP ASSEGNATO
@@ -440,7 +423,7 @@
                   action: "create"
                   resource:
                     level: "info"
-                    message: " Floating IP {{ lb_floating_ip }} assegnato al Load Balancer '{{ lb_name }}'"
+                    message: "Floating IP {{ lb_floating_ip }} assegnato al Load Balancer {{ lb_name }}"
                     subject_type: "User"
                     subject_id: "{{ manageiq_user_id }}"
                 body_format: json
@@ -459,21 +442,14 @@
         # ========================================
         - name: Generate final summary
           debug:
-            msg: |
-              ╔═══════════════════════════════════════════════════════════════════╗
-              ║           LOAD BALANCER CREATO CON SUCCESSO                       ║
-              ╚═══════════════════════════════════════════════════════════════════╝
-              
-              📋 INFORMAZIONI:
-              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-              Nome:     {{ lb_name }}
-              VIP:      {{ lb_vip_address }}
-              {% if lb_floating_ip is defined %}Floating: {{ lb_floating_ip }}{% endif %}
-              Listener: {{ listener_protocol }}:{{ listener_port }}
-              Pool:     {{ pool_algorithm }}
-              {% if pool_session_persistence is defined and pool_session_persistence != 'None' %}Session:  {{ pool_session_persistence }}{% endif %}
-              {% if pool_members_list is defined %}Membri:   {{ pool_members_list | length }}{% endif %}
-              {% if create_health_monitor | bool %}Monitor:  {{ monitor_type | default('TCP') }}{% endif %}
+            msg:
+              - "=========================================="
+              - "LOAD BALANCER CREATO CON SUCCESSO"
+              - "=========================================="
+              - "Nome: {{ lb_name }}"
+              - "VIP: {{ lb_vip_address }}"
+              - "Listener: {{ listener_protocol }}:{{ listener_port }}"
+              - "Pool: {{ pool_algorithm }}"
 
         # ========================================
         # NOTIFICA 7: SUCCESSO FINALE
@@ -489,7 +465,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: " Load Balancer L4 '{{ lb_name }}' completato | VIP: {{ lb_vip_address }}{% if lb_floating_ip is defined %} | FIP: {{ lb_floating_ip }}{% endif %} | {{ listener_protocol }}:{{ listener_port }}{% if pool_members_list is defined %} | {{ pool_members_list | length }} backend{% endif %}"
+                message: "Load Balancer L4 {{ lb_name }} completato - VIP {{ lb_vip_address }} - {{ listener_protocol }}:{{ listener_port }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -518,7 +494,7 @@
               action: "create"
               resource:
                 level: "error"
-                message: " Creazione Load Balancer L4 '{{ lb_name }}' fallita! | Errore: {{ ansible_failed_task.name | default('operazione sconosciuta') }}"
+                message: "Creazione Load Balancer L4 {{ lb_name }} fallita - Errore {{ ansible_failed_task.name | default('operazione sconosciuta') }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -540,8 +516,8 @@
 
         - name: Log cleanup
           debug:
-            msg: " Errore rilevato. Risorse parzialmente create eliminate."
+            msg: "Errore rilevato - Risorse parzialmente create eliminate"
 
         - name: Fail the playbook
           fail:
-            msg: "Creazione Load Balancer L4 fallita: {{ ansible_failed_task.name | default('operazione sconosciuta') }}"
+            msg: "Creazione Load Balancer L4 fallita"
