@@ -200,9 +200,9 @@
           ignore_errors: yes
 
         # ========================================
-        # CREATE POOL (Always)
+        # CREATE POOL - SEMPLIFICATO SENZA SESSION PERSISTENCE
         # ========================================
-        - name: Create Pool without session persistence
+        - name: Create Pool
           openstack.cloud.lb_pool:
             name: "{{ pool_name }}"
             listener: "{{ listener_name }}"
@@ -213,33 +213,10 @@
             wait: yes
             timeout: 120
           register: pool_created
-          when: 
-            - pool_session_persistence is not defined or 
-              pool_session_persistence == 'None' or 
-              pool_session_persistence == '' or
-              pool_session_persistence | length == 0
-
-        - name: Create Pool with session persistence
-          openstack.cloud.lb_pool:
-            name: "{{ pool_name }}"
-            listener: "{{ listener_name }}"
-            protocol: "{{ pool_protocol | upper }}"
-            lb_algorithm: "{{ pool_algorithm }}"
-            description: "{{ pool_description | default(omit) }}"
-            session_persistence:
-              type: "{{ pool_session_persistence }}"
-            state: present
-            wait: yes
-            timeout: 120
-          register: pool_created_with_persistence
-          when: 
-            - pool_session_persistence is defined
-            - pool_session_persistence != 'None'
-            - pool_session_persistence | length > 0
 
         - name: Log Pool creation
           debug:
-            msg: "Pool {{ pool_name }} creato - Algoritmo {{ pool_algorithm }}"
+            msg: "Pool {{ pool_name }} creato con successo - Algoritmo {{ pool_algorithm }}"
 
         # ========================================
         # PARSE AND ADD POOL MEMBERS (Optional - 0 to N)
