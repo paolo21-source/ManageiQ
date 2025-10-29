@@ -9,7 +9,7 @@
     # Nomi derivati automaticamente
     listener_name: "{{ lb_name }}-listener"
     pool_name: "{{ lb_name }}-pool"
-    monitor_name: "{{ lb_name }}-monitor"
+    monitor_name: "{{ monitor_name | default(lb_name + '-monitor') }}"
     
     # Default values
     listener_protocol: "{{ listener_protocol | default('TCP') }}"
@@ -19,7 +19,7 @@
     # Feature flags (listener e pool sempre true)
     create_listener: true
     create_pool: true
-    create_health_monitor: "{{ create_health_monitor | default(true) }}"
+    create_health_monitor: "{{ create_health_monitor | default(false) }}"
   
   tasks:
     # ========================================
@@ -313,23 +313,19 @@
         # CREATE HEALTH MONITOR (Optional)
         # ========================================
         - name: Create Health Monitor block
-          when: create_health_monitor | bool
+          when: 
+            - create_health_monitor | bool
+            - monitor_type is defined
+            - monitor_delay is defined
+            - monitor_timeout is defined
           block:
-            - name: Validate monitor parameters
-              assert:
-                that:
-                  - monitor_type is defined
-                  - monitor_delay is defined
-                  - monitor_timeout is defined
-                fail_msg: "Monitor parameters missing"
-            
             - name: Create Health Monitor
               openstack.cloud.lb_health_monitor:
                 name: "{{ monitor_name }}"
                 pool: "{{ pool_name }}"
-                type: "{{ monitor_type | default('TCP') | upper }}"
-                delay: "{{ monitor_delay | default(5) | int }}"
-                health_monitor_timeout: "{{ monitor_timeout | default(5) | int }}"
+                type: "{{ monitor_type | upper }}"
+                delay: "{{ monitor_delay | int }}"
+                health_monitor_timeout: "{{ monitor_timeout | int }}"
                 max_retries: "{{ monitor_max_retries | default(3) | int }}"
                 max_retries_down: "{{ monitor_max_retries_down | default(3) | int }}"
                 http_method: "{{ monitor_http_method | default(omit) }}"
@@ -342,7 +338,7 @@
 
             - name: Log Health Monitor creation
               debug:
-                msg: "✅ Health Monitor '{{ monitor_name }}' creato! Tipo: {{ monitor_type | default('TCP') }}"
+                msg: "✅ Health Monitor '{{ monitor_name }}' creato! Tipo: {{ monitor_type }}"
 
             # ========================================
             # NOTIFICA 5: HEALTH MONITOR CREATO
@@ -358,7 +354,7 @@
                   action: "create"
                   resource:
                     level: "info"
-                    message: "✅ Health Monitor '{{ monitor_name }}' configurato | Tipo: {{ monitor_type | default('TCP') }} | Delay: {{ monitor_delay | default(5) }}s"
+                    message: "✅ Health Monitor '{{ monitor_name }}' configurato | Tipo: {{ monitor_type }} | Delay: {{ monitor_delay }}s"
                     subject_type: "User"
                     subject_id: "{{ manageiq_user_id }}"
                 body_format: json
@@ -371,6 +367,15 @@
                 - manageiq_user_id is defined
               run_once: true
               ignore_errors: yes
+
+        - name: Log Health Monitor skipped
+          debug:
+            msg: "ℹ️  Health Monitor non configurato (parametri mancanti o disabilitato)"
+          when: 
+            - not (create_health_monitor | bool) or
+              monitor_type is not defined or
+              monitor_delay is not defined or
+              monitor_timeout is not defined
 
         # ========================================
         # FLOATING IP MANAGEMENT (Optional)
