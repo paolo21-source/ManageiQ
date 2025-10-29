@@ -171,7 +171,7 @@
         # ========================================
         # CREATE LISTENER (Always)
         # ========================================
-        - name: Create Listener with all configurations
+        - name: Create Listener
           openstack.cloud.lb_listener:
             name: "{{ listener_name }}"
             load_balancer: "{{ lb_name }}"
@@ -180,8 +180,6 @@
             description: "{{ listener_description | default(omit) }}"
             timeout_client_data: "{{ listener_client_data_timeout | default(50000) | int }}"
             timeout_member_data: "{{ listener_member_data_timeout | default(50000) | int }}"
-            connection_limit: "{{ listener_connection_limit | default(-1) | int }}"
-            allowed_cidrs: "{{ listener_allowed_cidrs | default(omit) }}"
             is_admin_state_up: true
             state: present
             wait: yes
@@ -191,6 +189,22 @@
         - name: Log Listener creation
           debug:
             msg: "✅ Listener '{{ listener_name }}' creato! Protocollo: {{ listener_protocol }}, Porta: {{ listener_port }}"
+
+        # ========================================
+        # CONFIGURE LISTENER ADVANCED SETTINGS (Optional - Best Effort)
+        # ========================================
+        - name: Log advanced listener settings info
+          debug:
+            msg: |
+              ℹ️  Nota: Le seguenti impostazioni avanzate del listener non sono gestite automaticamente:
+              - Connection Limit: {{ listener_connection_limit | default('Non specificato') }}
+              - Allowed CIDRs: {{ listener_allowed_cidrs | default('Non specificato') }}
+              
+              Se necessario, configurale manualmente tramite:
+              openstack loadbalancer listener set {{ listener_name }} --connection-limit {{ listener_connection_limit | default(-1) }}
+              openstack loadbalancer listener set {{ listener_name }} --allowed-cidr {{ listener_allowed_cidrs | default('0.0.0.0/0') }}
+          when: 
+            - listener_connection_limit is defined or listener_allowed_cidrs is defined
 
         # ========================================
         # NOTIFICA 3: LISTENER CREATO
