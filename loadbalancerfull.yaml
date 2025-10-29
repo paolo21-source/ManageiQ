@@ -40,7 +40,7 @@
               - listener_port | int > 0
               - listener_port | int < 65536
             fail_msg: |
-              ❌ ERRORE: Variabili richieste mancanti!
+               ERRORE: Variabili richieste mancanti!
               Richieste: lb_name, lb_subnet, listener_port
 
         # ========================================
@@ -57,7 +57,7 @@
               action: "create"
               resource:
                 level: "info"
-                message: "🚀 Avvio creazione Load Balancer L4 '{{ lb_name }}' | Subnet: {{ lb_subnet }} | Listener: {{ listener_protocol }}:{{ listener_port }}"
+                message: " Avvio creazione Load Balancer L4 '{{ lb_name }}' | Subnet: {{ lb_subnet }} | Listener: {{ listener_protocol }}:{{ listener_port }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -81,22 +81,23 @@
               ║     CONFIGURAZIONE LOAD BALANCER L4 - OPENSTACK      ║
               ╚═══════════════════════════════════════════════════════╝
               
-              📋 LOAD BALANCER:
+               LOAD BALANCER:
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
               Nome:                  {{ lb_name }}
               IP Address:            {{ lb_ip_address | default('Auto-assign') }}
               Subnet VIP:            {{ lb_subnet }}
               
-              🎧 LISTENER:
+               LISTENER:
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
               Protocollo:            {{ listener_protocol }}
               Porta:                 {{ listener_port }}
               
-              🏊 POOL:
+               POOL:
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
               Algoritmo:             {{ pool_algorithm }}
+              Session Persistence:   {{ pool_session_persistence | default('None') }}
               
-              🖥️  BACKEND SERVERS:
+                BACKEND SERVERS:
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
               Backend Servers:       {{ backend_servers | default('Nessuno - pool vuoto') }}
 
@@ -135,7 +136,7 @@
 
         - name: Log Load Balancer creation
           debug:
-            msg: "✅ Load Balancer '{{ lb_name }}' creato! ID: {{ lb_id }}, VIP: {{ lb_vip_address }}"
+            msg: " Load Balancer '{{ lb_name }}' creato! ID: {{ lb_id }}, VIP: {{ lb_vip_address }}"
 
         # ========================================
         # NOTIFICA 2: LOAD BALANCER CREATO
@@ -151,7 +152,7 @@
               action: "create"
               resource:
                 level: "info"
-                message: "✅ Load Balancer '{{ lb_name }}' creato | VIP: {{ lb_vip_address }} | ID: {{ lb_id }}"
+                message: " Load Balancer '{{ lb_name }}' creato | VIP: {{ lb_vip_address }} | ID: {{ lb_id }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -185,35 +186,7 @@
 
         - name: Log Listener creation
           debug:
-            msg: "✅ Listener '{{ listener_name }}' creato! Protocollo: {{ listener_protocol }}, Porta: {{ listener_port }}"
-
-        # ========================================
-        # CONFIGURE LISTENER ADVANCED SETTINGS (Optional via CLI)
-        # ========================================
-        - name: Configure Listener connection limit
-          when: 
-            - listener_connection_limit is defined
-            - listener_connection_limit | int != -1
-          block:
-            - name: Set connection limit on listener
-              command: >
-                openstack loadbalancer listener set {{ listener_name }}
-                --connection-limit {{ listener_connection_limit | int }}
-              register: listener_limit_set
-              ignore_errors: yes
-
-        - name: Configure Listener allowed CIDRs
-          when: 
-            - listener_allowed_cidrs is defined
-            - listener_allowed_cidrs != '0.0.0.0/0'
-            - listener_allowed_cidrs | length > 0
-          block:
-            - name: Set allowed CIDRs on listener
-              command: >
-                openstack loadbalancer listener set {{ listener_name }}
-                --allowed-cidr {{ listener_allowed_cidrs }}
-              register: listener_cidrs_set
-              ignore_errors: yes
+            msg: " Listener '{{ listener_name }}' creato! Protocollo: {{ listener_protocol }}, Porta: {{ listener_port }}"
 
         # ========================================
         # NOTIFICA 3: LISTENER CREATO
@@ -229,7 +202,7 @@
               action: "create"
               resource:
                 level: "info"
-                message: "✅ Listener '{{ listener_name }}' configurato | Protocollo: {{ listener_protocol }} | Porta: {{ listener_port }}"
+                message: " Listener '{{ listener_name }}' configurato | Protocollo: {{ listener_protocol }} | Porta: {{ listener_port }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -246,7 +219,7 @@
         # ========================================
         # CREATE POOL (Always)
         # ========================================
-        - name: Create Pool
+        - name: Create Pool without session persistence
           openstack.cloud.lb_pool:
             name: "{{ pool_name }}"
             listener: "{{ listener_name }}"
@@ -257,24 +230,33 @@
             wait: yes
             timeout: 120
           register: pool_created
+          when: 
+            - pool_session_persistence is not defined or 
+              pool_session_persistence == 'None' or 
+              pool_session_persistence == '' or
+              pool_session_persistence | length == 0
 
-        - name: Log Pool creation
-          debug:
-            msg: "✅ Pool '{{ pool_name }}' creato! Algoritmo: {{ pool_algorithm }}"
-
-        # Session Persistence (se specificato e diverso da None)
-        - name: Configure Session Persistence
+        - name: Create Pool with session persistence
+          openstack.cloud.lb_pool:
+            name: "{{ pool_name }}"
+            listener: "{{ listener_name }}"
+            protocol: "{{ pool_protocol | upper }}"
+            lb_algorithm: "{{ pool_algorithm }}"
+            description: "{{ pool_description | default(omit) }}"
+            session_persistence:
+              type: "{{ pool_session_persistence }}"
+            state: present
+            wait: yes
+            timeout: 120
+          register: pool_created_with_persistence
           when: 
             - pool_session_persistence is defined
             - pool_session_persistence != 'None'
             - pool_session_persistence | length > 0
-          block:
-            - name: Set session persistence on pool
-              command: >
-                openstack loadbalancer pool set {{ pool_name }}
-                --session-persistence type={{ pool_session_persistence }}
-              register: persistence_set
-              ignore_errors: yes
+
+        - name: Log Pool creation
+          debug:
+            msg: " Pool '{{ pool_name }}' creato! Algoritmo: {{ pool_algorithm }}{% if pool_session_persistence is defined and pool_session_persistence != 'None' and pool_session_persistence | length > 0 %} | Session Persistence: {{ pool_session_persistence }}{% endif %}"
 
         # ========================================
         # PARSE AND ADD POOL MEMBERS (Optional - 0 to N)
@@ -313,7 +295,7 @@
 
             - name: Log members added
               debug:
-                msg: "✅ Aggiunti {{ pool_members_list | default([]) | length }} membri al pool '{{ pool_name }}'"
+                msg: " Aggiunti {{ pool_members_list | default([]) | length }} membri al pool '{{ pool_name }}'"
               when: pool_members_list is defined
 
             # ========================================
@@ -330,7 +312,7 @@
                   action: "create"
                   resource:
                     level: "info"
-                    message: "✅ Pool '{{ pool_name }}' configurato | Algoritmo: {{ pool_algorithm }} | Membri: {{ pool_members_list | default([]) | length }}"
+                    message: " Pool '{{ pool_name }}' configurato | Algoritmo: {{ pool_algorithm }} | Membri: {{ pool_members_list | default([]) | length }}{% if pool_session_persistence is defined and pool_session_persistence != 'None' %} | Session Persistence: {{ pool_session_persistence }}{% endif %}"
                     subject_type: "User"
                     subject_id: "{{ manageiq_user_id }}"
                 body_format: json
@@ -384,7 +366,7 @@
 
             - name: Log Health Monitor creation
               debug:
-                msg: "✅ Health Monitor '{{ monitor_name }}' creato! Tipo: {{ monitor_type | default('TCP') }}"
+                msg: " Health Monitor '{{ monitor_name }}' creato! Tipo: {{ monitor_type | default('TCP') }}"
 
             # ========================================
             # NOTIFICA 5: HEALTH MONITOR CREATO
@@ -400,7 +382,7 @@
                   action: "create"
                   resource:
                     level: "info"
-                    message: "✅ Health Monitor '{{ monitor_name }}' configurato | Tipo: {{ monitor_type | default('TCP') }} | Delay: {{ monitor_delay | default(5) }}s"
+                    message: " Health Monitor '{{ monitor_name }}' configurato | Tipo: {{ monitor_type | default('TCP') }} | Delay: {{ monitor_delay | default(5) }}s"
                     subject_type: "User"
                     subject_id: "{{ manageiq_user_id }}"
                 body_format: json
@@ -442,7 +424,7 @@
 
             - name: Log Floating IP assignment
               debug:
-                msg: "✅ Floating IP {{ lb_floating_ip }} assegnato al Load Balancer"
+                msg: " Floating IP {{ lb_floating_ip }} assegnato al Load Balancer"
 
             # ========================================
             # NOTIFICA 6: FLOATING IP ASSEGNATO
@@ -458,7 +440,7 @@
                   action: "create"
                   resource:
                     level: "info"
-                    message: "✅ Floating IP {{ lb_floating_ip }} assegnato al Load Balancer '{{ lb_name }}'"
+                    message: " Floating IP {{ lb_floating_ip }} assegnato al Load Balancer '{{ lb_name }}'"
                     subject_type: "User"
                     subject_id: "{{ manageiq_user_id }}"
                 body_format: json
@@ -479,16 +461,19 @@
           debug:
             msg: |
               ╔═══════════════════════════════════════════════════════════════════╗
-              ║          ✅✅✅ LOAD BALANCER CREATO CON SUCCESSO ✅✅✅          ║
+              ║           LOAD BALANCER CREATO CON SUCCESSO                       ║
               ╚═══════════════════════════════════════════════════════════════════╝
               
               📋 INFORMAZIONI:
+              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
               Nome:     {{ lb_name }}
               VIP:      {{ lb_vip_address }}
               {% if lb_floating_ip is defined %}Floating: {{ lb_floating_ip }}{% endif %}
               Listener: {{ listener_protocol }}:{{ listener_port }}
               Pool:     {{ pool_algorithm }}
+              {% if pool_session_persistence is defined and pool_session_persistence != 'None' %}Session:  {{ pool_session_persistence }}{% endif %}
               {% if pool_members_list is defined %}Membri:   {{ pool_members_list | length }}{% endif %}
+              {% if create_health_monitor | bool %}Monitor:  {{ monitor_type | default('TCP') }}{% endif %}
 
         # ========================================
         # NOTIFICA 7: SUCCESSO FINALE
@@ -504,7 +489,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: "✅ Load Balancer L4 '{{ lb_name }}' completato | VIP: {{ lb_vip_address }}{% if lb_floating_ip is defined %} | FIP: {{ lb_floating_ip }}{% endif %} | {{ listener_protocol }}:{{ listener_port }}"
+                message: " Load Balancer L4 '{{ lb_name }}' completato | VIP: {{ lb_vip_address }}{% if lb_floating_ip is defined %} | FIP: {{ lb_floating_ip }}{% endif %} | {{ listener_protocol }}:{{ listener_port }}{% if pool_members_list is defined %} | {{ pool_members_list | length }} backend{% endif %}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -533,7 +518,7 @@
               action: "create"
               resource:
                 level: "error"
-                message: "❌ Creazione Load Balancer L4 '{{ lb_name }}' fallita! | Errore durante: {{ ansible_failed_task.name | default('operazione sconosciuta') }}"
+                message: " Creazione Load Balancer L4 '{{ lb_name }}' fallita! | Errore: {{ ansible_failed_task.name | default('operazione sconosciuta') }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -555,7 +540,7 @@
 
         - name: Log cleanup
           debug:
-            msg: "⚠️  Errore rilevato. Risorse parzialmente create eliminate."
+            msg: " Errore rilevato. Risorse parzialmente create eliminate."
 
         - name: Fail the playbook
           fail:
