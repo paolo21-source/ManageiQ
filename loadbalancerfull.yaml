@@ -91,10 +91,13 @@
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
               Protocollo:            {{ listener_protocol }}
               Porta:                 {{ listener_port }}
+              Connection Limit:      {{ listener_connection_limit | default('Unlimited') }}
+              Allowed CIDRs:         {{ listener_allowed_cidrs | default('0.0.0.0/0') }}
               
               🏊 POOL:
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
               Algoritmo:             {{ pool_algorithm }}
+              Session Persistence:   {{ pool_session_persistence | default('None') }}
               
               🖥️  BACKEND SERVERS:
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -168,7 +171,7 @@
         # ========================================
         # CREATE LISTENER (Always)
         # ========================================
-        - name: Create Listener
+        - name: Create Listener with all configurations
           openstack.cloud.lb_listener:
             name: "{{ listener_name }}"
             load_balancer: "{{ lb_name }}"
@@ -177,6 +180,8 @@
             description: "{{ listener_description | default(omit) }}"
             timeout_client_data: "{{ listener_client_data_timeout | default(50000) | int }}"
             timeout_member_data: "{{ listener_member_data_timeout | default(50000) | int }}"
+            connection_limit: "{{ listener_connection_limit | default(-1) | int }}"
+            allowed_cidrs: "{{ listener_allowed_cidrs | default(omit) }}"
             is_admin_state_up: true
             state: present
             wait: yes
@@ -186,34 +191,6 @@
         - name: Log Listener creation
           debug:
             msg: "✅ Listener '{{ listener_name }}' creato! Protocollo: {{ listener_protocol }}, Porta: {{ listener_port }}"
-
-        # ========================================
-        # CONFIGURE LISTENER ADVANCED SETTINGS (Optional via CLI)
-        # ========================================
-        - name: Configure Listener connection limit
-          when: 
-            - listener_connection_limit is defined
-            - listener_connection_limit | int != -1
-          block:
-            - name: Set connection limit on listener
-              command: >
-                openstack loadbalancer listener set {{ listener_name }}
-                --connection-limit {{ listener_connection_limit | int }}
-              register: listener_limit_set
-              ignore_errors: yes
-
-        - name: Configure Listener allowed CIDRs
-          when: 
-            - listener_allowed_cidrs is defined
-            - listener_allowed_cidrs != '0.0.0.0/0'
-            - listener_allowed_cidrs | length > 0
-          block:
-            - name: Set allowed CIDRs on listener
-              command: >
-                openstack loadbalancer listener set {{ listener_name }}
-                --allowed-cidr {{ listener_allowed_cidrs }}
-              register: listener_cidrs_set
-              ignore_errors: yes
 
         # ========================================
         # NOTIFICA 3: LISTENER CREATO
@@ -246,13 +223,28 @@
         # ========================================
         # CREATE POOL (Always)
         # ========================================
-        - name: Create Pool
+        - name: Prepare session persistence configuration
+          set_fact:
+            session_persistence_config: >-
+              {%- if pool_session_persistence is defined and pool_session_persistence != 'None' and pool_session_persistence | length > 0 -%}
+                {%- if pool_session_persistence | upper == 'APP_COOKIE' -%}
+                  {{ {'type': pool_session_persistence | upper, 'cookie_name': pool_session_cookie_name | default('JSESSIONID')} }}
+                {%- else -%}
+                  {{ {'type': pool_session_persistence | upper} }}
+                {%- endif -%}
+              {%- else -%}
+                {{ omit }}
+              {%- endif -%}
+          when: pool_session_persistence is defined
+
+        - name: Create Pool with session persistence
           openstack.cloud.lb_pool:
             name: "{{ pool_name }}"
             listener: "{{ listener_name }}"
             protocol: "{{ pool_protocol | upper }}"
             lb_algorithm: "{{ pool_algorithm }}"
             description: "{{ pool_description | default(omit) }}"
+            session_persistence: "{{ session_persistence_config | default(omit) }}"
             state: present
             wait: yes
             timeout: 120
@@ -260,21 +252,7 @@
 
         - name: Log Pool creation
           debug:
-            msg: "✅ Pool '{{ pool_name }}' creato! Algoritmo: {{ pool_algorithm }}"
-
-        # Session Persistence (se specificato e diverso da None)
-        - name: Configure Session Persistence
-          when: 
-            - pool_session_persistence is defined
-            - pool_session_persistence != 'None'
-            - pool_session_persistence | length > 0
-          block:
-            - name: Set session persistence on pool
-              command: >
-                openstack loadbalancer pool set {{ pool_name }}
-                --session-persistence type={{ pool_session_persistence }}
-              register: persistence_set
-              ignore_errors: yes
+            msg: "✅ Pool '{{ pool_name }}' creato! Algoritmo: {{ pool_algorithm }}, Session Persistence: {{ pool_session_persistence | default('None') }}"
 
         # ========================================
         # PARSE AND ADD POOL MEMBERS (Optional - 0 to N)
