@@ -22,10 +22,14 @@
     create_health_monitor: "{{ create_health_monitor | default(false) }}"
   
   tasks:
-
+    # ========================================
+    # MAIN BLOCK CON RESCUE
+    # ========================================
     - name: Main execution block
       block:
-
+        # ========================================
+        # VALIDATION
+        # ========================================
         - name: Validate required variables
           assert:
             that:
@@ -35,11 +39,11 @@
               - listener_port is defined
               - listener_port | int > 0
               - listener_port | int < 65536
-            fail_msg: |
-               ERRORE: Variabili richieste mancanti!
-              Richieste: lb_name, lb_subnet, listener_port
+            fail_msg: "ERRORE: Variabili richieste mancanti! Richieste: lb_name, lb_subnet, listener_port"
 
-
+        # ========================================
+        # NOTIFICA 1: INIZIO CREAZIONE
+        # ========================================
         - name: Send start notification to ManageIQ
           uri:
             url: "{{ manageiq_notification_url }}"
@@ -65,6 +69,9 @@
           run_once: true
           ignore_errors: yes
 
+        # ========================================
+        # LOGGING CONFIGURATION
+        # ========================================
         - name: Log initial configuration
           debug:
             msg: |
@@ -72,25 +79,28 @@
               ║     CONFIGURAZIONE LOAD BALANCER L4 - OPENSTACK      ║
               ╚═══════════════════════════════════════════════════════╝
               
-               LOAD BALANCER:
+              📋 LOAD BALANCER:
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
               Nome:                  {{ lb_name }}
               IP Address:            {{ lb_ip_address | default('Auto-assign') }}
               Subnet VIP:            {{ lb_subnet }}
               
-               LISTENER:
+              🎧 LISTENER:
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
               Protocollo:            {{ listener_protocol }}
               Porta:                 {{ listener_port }}
               
-               POOL:
+              🏊 POOL:
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
               Algoritmo:             {{ pool_algorithm }}
               
-                BACKEND SERVERS:
+              🖥️  BACKEND SERVERS:
               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
               Backend Servers:       {{ backend_servers | default('Nessuno - pool vuoto') }}
 
+        # ========================================
+        # OPTIONAL CLEANUP
+        # ========================================
         - name: Optional cleanup - Remove existing Load Balancer
           openstack.cloud.loadbalancer:
             name: "{{ lb_name }}"
@@ -100,6 +110,9 @@
           ignore_errors: yes
           when: cleanup_existing | default(false) | bool
 
+        # ========================================
+        # CREATE LOAD BALANCER
+        # ========================================
         - name: Create Load Balancer
           openstack.cloud.loadbalancer:
             name: "{{ lb_name }}"
@@ -120,8 +133,11 @@
 
         - name: Log Load Balancer creation
           debug:
-            msg: " Load Balancer '{{ lb_name }}' creato! ID: {{ lb_id }}, VIP: {{ lb_vip_address }}"
+            msg: "✅ Load Balancer '{{ lb_name }}' creato! ID: {{ lb_id }}, VIP: {{ lb_vip_address }}"
 
+        # ========================================
+        # NOTIFICA 2: LOAD BALANCER CREATO
+        # ========================================
         - name: Send Load Balancer created notification
           uri:
             url: "{{ manageiq_notification_url }}"
@@ -133,7 +149,7 @@
               action: "create"
               resource:
                 level: "info"
-                message: " Load Balancer '{{ lb_name }}' creato | VIP: {{ lb_vip_address }} | ID: {{ lb_id }}"
+                message: "✅ Load Balancer '{{ lb_name }}' creato | VIP: {{ lb_vip_address }} | ID: {{ lb_id }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -147,7 +163,9 @@
           run_once: true
           ignore_errors: yes
 
-
+        # ========================================
+        # CREATE LISTENER (Always)
+        # ========================================
         - name: Create Listener
           openstack.cloud.lb_listener:
             name: "{{ listener_name }}"
@@ -165,9 +183,11 @@
 
         - name: Log Listener creation
           debug:
-            msg: " Listener '{{ listener_name }}' creato! Protocollo: {{ listener_protocol }}, Porta: {{ listener_port }}"
+            msg: "✅ Listener '{{ listener_name }}' creato! Protocollo: {{ listener_protocol }}, Porta: {{ listener_port }}"
 
-
+        # ========================================
+        # NOTIFICA 3: LISTENER CREATO
+        # ========================================
         - name: Send Listener created notification
           uri:
             url: "{{ manageiq_notification_url }}"
@@ -179,7 +199,7 @@
               action: "create"
               resource:
                 level: "info"
-                message: " Listener '{{ listener_name }}' configurato | Protocollo: {{ listener_protocol }} | Porta: {{ listener_port }}"
+                message: "✅ Listener '{{ listener_name }}' configurato | Protocollo: {{ listener_protocol }} | Porta: {{ listener_port }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -193,6 +213,9 @@
           run_once: true
           ignore_errors: yes
 
+        # ========================================
+        # CREATE POOL (Always)
+        # ========================================
         - name: Create Pool
           openstack.cloud.lb_pool:
             name: "{{ pool_name }}"
@@ -207,8 +230,11 @@
 
         - name: Log Pool creation
           debug:
-            msg: " Pool '{{ pool_name }}' creato! Algoritmo: {{ pool_algorithm }}"
+            msg: "✅ Pool '{{ pool_name }}' creato! Algoritmo: {{ pool_algorithm }}"
 
+        # ========================================
+        # PARSE AND ADD POOL MEMBERS (Optional - 0 to N)
+        # ========================================
         - name: Add Pool Members block
           when: 
             - backend_servers is defined
@@ -243,10 +269,12 @@
 
             - name: Log members added
               debug:
-                msg: " Aggiunti {{ pool_members_list | default([]) | length }} membri al pool '{{ pool_name }}'"
+                msg: "✅ Aggiunti {{ pool_members_list | default([]) | length }} membri al pool '{{ pool_name }}'"
               when: pool_members_list is defined
 
-
+            # ========================================
+            # NOTIFICA 4: POOL MEMBERS AGGIUNTI
+            # ========================================
             - name: Send Pool Members notification
               uri:
                 url: "{{ manageiq_notification_url }}"
@@ -258,7 +286,7 @@
                   action: "create"
                   resource:
                     level: "info"
-                    message: " Pool '{{ pool_name }}' configurato | Algoritmo: {{ pool_algorithm }} | Membri: {{ pool_members_list | default([]) | length }}"
+                    message: "✅ Pool '{{ pool_name }}' configurato | Algoritmo: {{ pool_algorithm }} | Membri: {{ pool_members_list | default([]) | length }}"
                     subject_type: "User"
                     subject_id: "{{ manageiq_user_id }}"
                 body_format: json
@@ -277,8 +305,11 @@
           when: 
             - backend_servers is not defined or backend_servers | length == 0
           debug:
-            msg: "  Pool creato senza membri. Potrai aggiungerne in seguito tramite OpenStack."
+            msg: "ℹ️  Pool creato senza membri. Potrai aggiungerne in seguito tramite OpenStack."
 
+        # ========================================
+        # CREATE HEALTH MONITOR (Optional)
+        # ========================================
         - name: Create Health Monitor block
           when: 
             - create_health_monitor | bool
@@ -305,8 +336,11 @@
 
             - name: Log Health Monitor creation
               debug:
-                msg: " Health Monitor '{{ monitor_name }}' creato! Tipo: {{ monitor_type }}"
+                msg: "✅ Health Monitor '{{ monitor_name }}' creato! Tipo: {{ monitor_type }}"
 
+            # ========================================
+            # NOTIFICA 5: HEALTH MONITOR CREATO
+            # ========================================
             - name: Send Health Monitor notification
               uri:
                 url: "{{ manageiq_notification_url }}"
@@ -318,7 +352,7 @@
                   action: "create"
                   resource:
                     level: "info"
-                    message: " Health Monitor '{{ monitor_name }}' configurato | Tipo: {{ monitor_type }} | Delay: {{ monitor_delay }}s"
+                    message: "✅ Health Monitor '{{ monitor_name }}' configurato | Tipo: {{ monitor_type }} | Delay: {{ monitor_delay }}s"
                     subject_type: "User"
                     subject_id: "{{ manageiq_user_id }}"
                 body_format: json
@@ -334,13 +368,16 @@
 
         - name: Log Health Monitor skipped
           debug:
-            msg: "  Health Monitor non configurato (parametri mancanti o disabilitato)"
+            msg: "ℹ️  Health Monitor non configurato (parametri mancanti o disabilitato)"
           when: 
             - not (create_health_monitor | bool) or
               monitor_type is not defined or
               monitor_delay is not defined or
               monitor_timeout is not defined
 
+        # ========================================
+        # FLOATING IP MANAGEMENT (Optional)
+        # ========================================
         - name: Floating IP management block
           when: 
             - assign_floating_ip | default(false) | bool
@@ -366,8 +403,11 @@
 
             - name: Log Floating IP assignment
               debug:
-                msg: " Floating IP {{ lb_floating_ip }} assegnato al Load Balancer"
+                msg: "✅ Floating IP {{ lb_floating_ip }} assegnato al Load Balancer"
 
+            # ========================================
+            # NOTIFICA 6: FLOATING IP ASSEGNATO
+            # ========================================
             - name: Send Floating IP notification
               uri:
                 url: "{{ manageiq_notification_url }}"
@@ -379,7 +419,7 @@
                   action: "create"
                   resource:
                     level: "info"
-                    message: " Floating IP {{ lb_floating_ip }} assegnato al Load Balancer '{{ lb_name }}'"
+                    message: "✅ Floating IP {{ lb_floating_ip }} assegnato al Load Balancer '{{ lb_name }}'"
                     subject_type: "User"
                     subject_id: "{{ manageiq_user_id }}"
                 body_format: json
@@ -393,11 +433,14 @@
               run_once: true
               ignore_errors: yes
 
+        # ========================================
+        # FINAL SUMMARY
+        # ========================================
         - name: Generate final summary
           debug:
             msg: |
               ╔═══════════════════════════════════════════════════════════════════╗
-              ║                LOAD BALANCER CREATO CON SUCCESSO                  ║
+              ║          ✅✅✅ LOAD BALANCER CREATO CON SUCCESSO ✅✅✅          ║
               ╚═══════════════════════════════════════════════════════════════════╝
               
               📋 INFORMAZIONI:
@@ -408,7 +451,63 @@
               Pool:     {{ pool_algorithm }}
               {% if pool_members_list is defined %}Membri:   {{ pool_members_list | length }}{% endif %}
 
+        # ========================================
+        # NOTIFICA 7: SUCCESSO FINALE
+        # ========================================
+        # ⚠️ DISABILITATA - Gestita da ManageIQ post_process.rb
+        # - name: Send final success notification to ManageIQ
+        #   uri:
+        #     url: "{{ manageiq_notification_url }}"
+        #     method: POST
+        #     headers:
+        #       X-Auth-Token: "{{ manageiq_auth_token }}"
+        #       Content-Type: application/json
+        #     body:
+        #       action: "create"
+        #       resource:
+        #         level: "success"
+        #         message: "✅ Load Balancer L4 '{{ lb_name }}' completato | VIP: {{ lb_vip_address }}{% if lb_floating_ip is defined %} | FIP: {{ lb_floating_ip }}{% endif %} | {{ listener_protocol }}:{{ listener_port }}"
+        #         subject_type: "User"
+        #         subject_id: "{{ manageiq_user_id }}"
+        #     body_format: json
+        #     status_code: 200
+        #     timeout: 10
+        #   delegate_to: localhost
+        #   when: 
+        #     - manageiq_notification_url is defined
+        #     - manageiq_auth_token is defined
+        #     - manageiq_user_id is defined
+        #   run_once: true
+        #   ignore_errors: yes
+
+      # ========================================
+      # RESCUE BLOCK - GESTIONE ERRORI
+      # ========================================
       rescue:
+        # ⚠️ DISABILITATA - Gestita da ManageIQ post_process.rb
+        # - name: Send error notification to ManageIQ
+        #   uri:
+        #     url: "{{ manageiq_notification_url }}"
+        #     method: POST
+        #     headers:
+        #       X-Auth-Token: "{{ manageiq_auth_token }}"
+        #       Content-Type: application/json
+        #     body:
+        #       action: "create"
+        #       resource:
+        #         level: "error"
+        #         message: "❌ Creazione Load Balancer L4 '{{ lb_name }}' fallita! | Errore durante: {{ ansible_failed_task.name | default('operazione sconosciuta') }}"
+        #         subject_type: "User"
+        #         subject_id: "{{ manageiq_user_id }}"
+        #     body_format: json
+        #     status_code: 200
+        #     timeout: 10
+        #   delegate_to: localhost
+        #   when: 
+        #     - manageiq_notification_url is defined
+        #     - manageiq_auth_token is defined
+        #     - manageiq_user_id is defined
+        #   ignore_errors: yes
 
         - name: Cleanup on failure
           openstack.cloud.loadbalancer:
@@ -419,7 +518,7 @@
 
         - name: Log cleanup
           debug:
-            msg: " Errore rilevato. Risorse parzialmente create eliminate."
+            msg: "⚠️  Errore rilevato. Risorse parzialmente create eliminate."
 
         - name: Fail the playbook
           fail:
