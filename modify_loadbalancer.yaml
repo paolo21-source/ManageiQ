@@ -1,0 +1,397 @@
+---
+- name: Modify OpenStack Load Balancer L4
+  hosts: localhost
+  gather_facts: no
+  collections:
+    - openstack.cloud
+  
+  vars:
+    # Azione da eseguire (add_member, remove_member, update_monitor, update_pool, assign_fip, remove_fip)
+    modify_action: "{{ modify_action | default('add_member') }}"
+    
+  tasks:
+    # ========================================
+    # VALIDATION
+    # ========================================
+    - name: Validate required variables
+      assert:
+        that:
+          - lb_name is defined
+          - lb_name | length > 0
+          - modify_action is defined
+        fail_msg: "ERRORE: Variabili richieste mancanti! Richieste: lb_name, modify_action"
+
+    # ========================================
+    # NOTIFICA: INIZIO MODIFICA
+    # ========================================
+    - name: Send start notification to ManageIQ
+      uri:
+        url: "{{ manageiq_notification_url }}"
+        method: POST
+        headers:
+          X-Auth-Token: "{{ manageiq_auth_token }}"
+          Content-Type: application/json
+        body:
+          action: "update"
+          resource:
+            level: "info"
+            message: "Avvio modifica Load Balancer '{{ lb_name }}' | Azione: {{ modify_action }}"
+            subject_type: "User"
+            subject_id: "{{ manageiq_user_id }}"
+        body_format: json
+        status_code: 200
+        timeout: 10
+      delegate_to: localhost
+      when: 
+        - manageiq_notification_url is defined
+        - manageiq_auth_token is defined
+        - manageiq_user_id is defined
+      run_once: true
+      ignore_errors: yes
+
+    # ========================================
+    # VERIFICA ESISTENZA LOAD BALANCER
+    # ========================================
+    - name: Verify Load Balancer exists
+      openstack.cloud.loadbalancer_info:
+        name: "{{ lb_name }}"
+      register: lb_info
+      failed_when: lb_info.loadbalancers | length == 0
+
+    - name: Set Load Balancer facts
+      set_fact:
+        lb_id: "{{ lb_info.loadbalancers[0].id }}"
+        lb_vip_address: "{{ lb_info.loadbalancers[0].vip_address }}"
+        lb_vip_port_id: "{{ lb_info.loadbalancers[0].vip_port_id }}"
+
+    - name: Log Load Balancer info
+      debug:
+        msg: "Load Balancer trovato: {{ lb_name }} (ID: {{ lb_id }}, VIP: {{ lb_vip_address }})"
+
+    # ========================================
+    # AZIONE: ADD MEMBER
+    # ========================================
+    - name: Add member to pool
+      when: modify_action == 'add_member'
+      block:
+        - name: Validate add_member parameters
+          assert:
+            that:
+              - pool_name is defined
+              - member_name is defined
+              - member_address is defined
+              - member_port is defined
+            fail_msg: "Parametri mancanti per add_member: pool_name, member_name, member_address, member_port"
+
+        - name: Add member to pool
+          openstack.cloud.lb_member:
+            name: "{{ member_name }}"
+            pool: "{{ pool_name }}"
+            address: "{{ member_address }}"
+            protocol_port: "{{ member_port | int }}"
+            subnet_id: "{{ member_subnet | default(omit) }}"
+            weight: "{{ member_weight | default(1) | int }}"
+            state: present
+            wait: yes
+            timeout: 120
+          register: member_added
+
+        - name: Notify member added
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "update"
+              resource:
+                level: "success"
+                message: "Membro '{{ member_name }}' ({{ member_address }}:{{ member_port }}) aggiunto al pool '{{ pool_name }}'"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+          delegate_to: localhost
+          when: 
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
+          run_once: true
+          ignore_errors: yes
+
+    # ========================================
+    # AZIONE: REMOVE MEMBER
+    # ========================================
+    - name: Remove member from pool
+      when: modify_action == 'remove_member'
+      block:
+        - name: Validate remove_member parameters
+          assert:
+            that:
+              - pool_name is defined
+              - member_name is defined
+            fail_msg: "Parametri mancanti per remove_member: pool_name, member_name"
+
+        - name: Remove member from pool
+          openstack.cloud.lb_member:
+            name: "{{ member_name }}"
+            pool: "{{ pool_name }}"
+            state: absent
+            wait: yes
+            timeout: 120
+          register: member_removed
+
+        - name: Notify member removed
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "update"
+              resource:
+                level: "success"
+                message: "Membro '{{ member_name }}' rimosso dal pool '{{ pool_name }}'"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+          delegate_to: localhost
+          when: 
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
+          run_once: true
+          ignore_errors: yes
+
+    # ========================================
+    # AZIONE: UPDATE HEALTH MONITOR
+    # ========================================
+    - name: Update or create health monitor
+      when: modify_action == 'update_monitor'
+      block:
+        - name: Validate update_monitor parameters
+          assert:
+            that:
+              - pool_name is defined
+              - monitor_type is defined
+              - monitor_delay is defined
+              - monitor_timeout is defined
+            fail_msg: "Parametri mancanti per update_monitor"
+
+        - name: Set monitor name
+          set_fact:
+            monitor_name: "{{ monitor_name | default(lb_name + '-monitor') }}"
+
+        - name: Update or create health monitor
+          openstack.cloud.lb_health_monitor:
+            name: "{{ monitor_name }}"
+            pool: "{{ pool_name }}"
+            type: "{{ monitor_type | upper }}"
+            delay: "{{ monitor_delay | int }}"
+            health_monitor_timeout: "{{ monitor_timeout | int }}"
+            max_retries: "{{ monitor_max_retries | default(3) | int }}"
+            max_retries_down: "{{ monitor_max_retries_down | default(3) | int }}"
+            http_method: "{{ monitor_http_method | default(omit) }}"
+            url_path: "{{ monitor_url_path | default(omit) }}"
+            expected_codes: "{{ monitor_expected_codes | default(omit) }}"
+            state: present
+            wait: yes
+            timeout: 120
+          register: monitor_updated
+
+        - name: Notify monitor updated
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "update"
+              resource:
+                level: "success"
+                message: "Health Monitor '{{ monitor_name }}' aggiornato per pool '{{ pool_name }}'"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+          delegate_to: localhost
+          when: 
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
+          run_once: true
+          ignore_errors: yes
+
+    # ========================================
+    # AZIONE: ASSIGN FLOATING IP
+    # ========================================
+    - name: Assign Floating IP to Load Balancer
+      when: modify_action == 'assign_fip'
+      block:
+        - name: Validate assign_fip parameters
+          assert:
+            that:
+              - lb_vip_port_id is defined
+              - floating_ip_network is defined
+            fail_msg: "Parametri mancanti per assign_fip: floating_ip_network"
+
+        - name: Create or get existing Floating IP
+          openstack.cloud.floating_ip:
+            network: "{{ floating_ip_network }}"
+            state: present
+          register: fip_created
+
+        - name: Attach Floating IP to Load Balancer VIP port
+          openstack.cloud.floating_ip:
+            floating_ip_address: "{{ fip_created.floating_ip.floating_ip_address }}"
+            port: "{{ lb_vip_port_id }}"
+            state: present
+          register: fip_attached
+
+        - name: Save Floating IP
+          set_fact:
+            lb_floating_ip: "{{ fip_created.floating_ip.floating_ip_address }}"
+
+        - name: Notify FIP assigned
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "update"
+              resource:
+                level: "success"
+                message: "Floating IP {{ lb_floating_ip }} assegnato al Load Balancer '{{ lb_name }}'"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+          delegate_to: localhost
+          when: 
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
+          run_once: true
+          ignore_errors: yes
+
+    # ========================================
+    # AZIONE: REMOVE FLOATING IP
+    # ========================================
+    - name: Remove Floating IP from Load Balancer
+      when: modify_action == 'remove_fip'
+      block:
+        - name: Find Floating IP attached to VIP port
+          openstack.cloud.floating_ip_info:
+            port: "{{ lb_vip_port_id }}"
+          register: fip_info
+
+        - name: Detach Floating IP
+          openstack.cloud.floating_ip:
+            floating_ip_address: "{{ item.floating_ip_address }}"
+            state: absent
+          loop: "{{ fip_info.floating_ips }}"
+          when: fip_info.floating_ips | length > 0
+
+        - name: Notify FIP removed
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "update"
+              resource:
+                level: "success"
+                message: "Floating IP rimosso dal Load Balancer '{{ lb_name }}'"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+          delegate_to: localhost
+          when: 
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
+          run_once: true
+          ignore_errors: yes
+
+    # ========================================
+    # AZIONE: UPDATE POOL ALGORITHM
+    # ========================================
+    - name: Update pool algorithm
+      when: modify_action == 'update_pool'
+      block:
+        - name: Validate update_pool parameters
+          assert:
+            that:
+              - pool_name is defined
+              - pool_algorithm is defined
+            fail_msg: "Parametri mancanti per update_pool: pool_name, pool_algorithm"
+
+        - name: Get pool info
+          command: >
+            openstack loadbalancer pool show {{ pool_name }} -f json
+          register: pool_info_cmd
+          changed_when: false
+
+        - name: Parse pool info
+          set_fact:
+            pool_id: "{{ (pool_info_cmd.stdout | from_json).id }}"
+
+        # Nota: L'algoritmo del pool non può essere modificato dopo la creazione
+        # Questa sezione può essere usata per aggiungere altri attributi modificabili
+        - name: Log pool algorithm update not supported
+          debug:
+            msg: "ATTENZIONE: L'algoritmo del pool non può essere modificato dopo la creazione. Pool: {{ pool_name }}"
+
+        - name: Notify limitation
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "update"
+              resource:
+                level: "warning"
+                message: "L'algoritmo del pool '{{ pool_name }}' non può essere modificato dopo la creazione (limitazione OpenStack)"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+          delegate_to: localhost
+          when: 
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
+          run_once: true
+          ignore_errors: yes
+
+    # ========================================
+    # FINAL SUMMARY
+    # ========================================
+    - name: Generate final summary
+      debug:
+        msg: |
+          ╔═══════════════════════════════════════════════════════════════════╗
+          ║              LOAD BALANCER MODIFICATO CON SUCCESSO                ║
+          ╚═══════════════════════════════════════════════════════════════════╝
+          
+          Load Balancer: {{ lb_name }}
+          Azione:        {{ modify_action }}
+          VIP:           {{ lb_vip_address }}
+          {% if lb_floating_ip is defined %}Floating IP:   {{ lb_floating_ip }}{% endif %}
