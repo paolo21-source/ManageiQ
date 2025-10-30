@@ -55,7 +55,7 @@
               action: "create"
               resource:
                 level: "info"
-                message: "🚀 Avvio creazione Load Balancer L4 '{{ lb_name }}' | Subnet: {{ lb_subnet }} | Listener: {{ listener_protocol }}:{{ listener_port }}"
+                message: "Avvio creazione Load Balancer L4 '{{ lb_name }}' | Subnet: {{ lb_subnet }} | Listener: {{ listener_protocol }}:{{ listener_port }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -244,17 +244,18 @@
               set_fact:
                 parsed_members: "{{ backend_servers.split(',') | map('trim') | list }}"
 
-            - name: Create pool members list
+            - name: Create pool members list with instance names
               set_fact:
-                pool_members_list: "{{ pool_members_list | default([]) + [{'address': item.split(':')[0] | trim, 'protocol_port': item.split(':')[1] | trim | int}] }}"
+                pool_members_list: "{{ pool_members_list | default([]) + [{'name': item.split('|')[0] | trim, 'address': item.split('|')[1].split(':')[0] | trim, 'protocol_port': item.split('|')[1].split(':')[1] | trim | int}] }}"
               loop: "{{ parsed_members }}"
               when: 
                 - item | length > 0
+                - "'|' in item"
                 - "':' in item"
 
             - name: Add members to pool
               openstack.cloud.lb_member:
-                name: "member-{{ item.address }}-{{ item.protocol_port }}"
+                name: "{{ item.name }}"
                 pool: "{{ pool_name }}"
                 address: "{{ item.address }}"
                 protocol_port: "{{ item.protocol_port }}"
