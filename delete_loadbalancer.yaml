@@ -39,7 +39,7 @@
           action: "update"
           resource:
             level: "warning"
-            message: "⚠️  Eliminazione Load Balancer in corso..."
+            message: "  Eliminazione Load Balancer in corso..."
             subject_type: "User"
             subject_id: "{{ manageiq_user_id }}"
         body_format: json
@@ -189,7 +189,7 @@
 
     - name: Log Floating IPs found
       debug:
-        msg: "📍 Trovati {{ fips_response.json.floatingips | length }} Floating IP da eliminare"
+        msg: " Trovati {{ fips_response.json.floatingips | length }} Floating IP da eliminare"
       when: 
         - delete_floatingips | bool
         - fips_response is defined
@@ -231,7 +231,7 @@
 
     - name: Verify deletion completed
       debug:
-        msg: "✅ Load Balancer eliminato con successo"
+        msg: "Load Balancer eliminato con successo"
       when: lb_delete_check.status == 404
 
     # ========================================
@@ -253,7 +253,7 @@
 
     - name: Log Floating IPs deletion
       debug:
-        msg: "✅ Floating IP eliminati"
+        msg: " Floating IP eliminati"
       when:
         - delete_floatingips | bool
         - fips_response is defined
