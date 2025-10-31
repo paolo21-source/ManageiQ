@@ -1,13 +1,11 @@
 ---
-- name: Modify OpenStack Load Balancer L4
+- name: Modify OpenStack Load Balancer L4 via API
   hosts: localhost
   gather_facts: no
-  collections:
-    - openstack.cloud
-
+  
   vars:
     action: "{{ action | default('add_member') }}"
-
+    
   tasks:
     # ========================================
     # VALIDATION
@@ -18,14 +16,18 @@
           - loadbalancer_id is defined
           - loadbalancer_id | length > 0
           - action is defined
+          - openstack_auth_url is defined
+          - openstack_username is defined
+          - openstack_password is defined
+          - openstack_project_name is defined
         fail_msg: "ERRORE: Variabili richieste mancanti!"
 
     - name: Log start
       debug:
-        msg: "Modifica Load Balancer ID: {{ loadbalancer_id }} | Azione: {{ action }}"
+        msg: "🚀 Modifica Load Balancer ID: {{ loadbalancer_id }} | Azione: {{ action }}"
 
     # ========================================
-    # NOTIFICA: INIZIO MODIFICA
+    # NOTIFICA: INIZIO
     # ========================================
     - name: Send start notification to ManageIQ
       uri:
@@ -48,31 +50,87 @@
       when:
         - manageiq_notification_url is defined
         - manageiq_auth_token is defined
-        - manageiq_user_id is defined
       ignore_errors: yes
 
     # ========================================
-    # GET LOAD BALANCER INFO (usa loadbalancers_info - PLURALE)
+    # AUTHENTICATE OPENSTACK KEYSTONE
     # ========================================
-    - name: Get all Load Balancers and filter by ID
-      openstack.cloud.loadbalancers_info:
-      register: all_lbs_result
+    - name: Authenticate to OpenStack Keystone
+      uri:
+        url: "{{ openstack_auth_url }}/v3/auth/tokens"
+        method: POST
+        body:
+          auth:
+            identity:
+              methods:
+                - password
+              password:
+                user:
+                  name: "{{ openstack_username }}"
+                  domain:
+                    name: "{{ openstack_domain_name | default('Default') }}"
+                  password: "{{ openstack_password }}"
+            scope:
+              project:
+                name: "{{ openstack_project_name }}"
+                domain:
+                  name: "{{ openstack_domain_name | default('Default') }}"
+        body_format: json
+        status_code: 201
+        return_content: yes
+        validate_certs: no
+      register: auth_response
 
-    - name: Find Load Balancer by ID
+    - name: Extract auth token
       set_fact:
-        lb_info: "{{ all_lbs_result.loadbalancers | selectattr('id', 'equalto', loadbalancer_id) | first }}"
+        os_auth_token: "{{ auth_response.x_subject_token }}"
 
-    - name: Fail if Load Balancer not found
+    - name: Parse service catalog
+      set_fact:
+        service_catalog: "{{ auth_response.json.token.catalog }}"
+
+    - name: Find Octavia endpoint
+      set_fact:
+        octavia_endpoint: "{{ item.endpoints | selectattr('interface', 'equalto', 'public') | map(attribute='url') | first | default(item.endpoints | selectattr('interface', 'equalto', 'internal') | map(attribute='url') | first) }}"
+      when: item.type == 'load-balancer' or item.name == 'octavia'
+      loop: "{{ service_catalog }}"
+      register: octavia_search
+
+    - name: Set Octavia URL
+      set_fact:
+        octavia_url: "{{ octavia_search.results | selectattr('ansible_facts', 'defined') | map(attribute='ansible_facts.octavia_endpoint') | select('defined') | first }}"
+
+    - name: Fail if Octavia not found
       fail:
-        msg: "Load Balancer con ID {{ loadbalancer_id }} non trovato!"
-      when: lb_info is not defined or lb_info == None
+        msg: "❌ Servizio Octavia non trovato nel service catalog"
+      when: octavia_url is not defined or octavia_url == ""
+
+    - name: Log Octavia endpoint
+      debug:
+        msg: "✅ Octavia endpoint: {{ octavia_url }}"
+
+    # ========================================
+    # GET LOAD BALANCER INFO
+    # ========================================
+    - name: Get Load Balancer details via API
+      uri:
+        url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+        method: GET
+        headers:
+          X-Auth-Token: "{{ os_auth_token }}"
+          Content-Type: application/json
+        status_code: 200
+        return_content: yes
+        validate_certs: no
+      register: lb_response
 
     - name: Set Load Balancer facts
       set_fact:
-        lb_name: "{{ lb_info.name }}"
-        lb_vip_address: "{{ lb_info.vip_address }}"
-        lb_vip_port_id: "{{ lb_info.vip_port_id }}"
-        lb_operating_status: "{{ lb_info.operating_status }}"
+        lb_info: "{{ lb_response.json.loadbalancer }}"
+        lb_name: "{{ lb_response.json.loadbalancer.name }}"
+        lb_vip_address: "{{ lb_response.json.loadbalancer.vip_address }}"
+        lb_vip_port_id: "{{ lb_response.json.loadbalancer.vip_port_id }}"
+        lb_operating_status: "{{ lb_response.json.loadbalancer.operating_status }}"
 
     - name: Log Load Balancer info
       debug:
@@ -96,18 +154,60 @@
           set_fact:
             member_name: "{{ member_name | default('member-' + member_address | replace('.', '-')) }}"
 
-        - name: Add member to pool
-          openstack.cloud.lb_member:
-            name: "{{ member_name }}"
-            pool: "{{ pool_name }}"
-            address: "{{ member_address }}"
-            protocol_port: "{{ member_port | int }}"
-            subnet_id: "{{ member_subnet | default(omit) }}"
-            weight: "{{ member_weight | default(1) | int }}"
-            state: present
-            wait: yes
-            timeout: 300
-          register: member_add_result
+        - name: Get pool ID by name
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/pools?name={{ pool_name }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: pool_response
+
+        - name: Extract pool ID
+          set_fact:
+            pool_id: "{{ pool_response.json.pools[0].id }}"
+          when: pool_response.json.pools | length > 0
+
+        - name: Fail if pool not found
+          fail:
+            msg: "❌ Pool {{ pool_name }} non trovato"
+          when: pool_id is not defined
+
+        - name: Create member via API
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}/members"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+              Content-Type: application/json
+            body:
+              member:
+                name: "{{ member_name }}"
+                address: "{{ member_address }}"
+                protocol_port: "{{ member_port | int }}"
+                weight: "{{ member_weight | default(1) | int }}"
+                subnet_id: "{{ member_subnet | default(omit) }}"
+            body_format: json
+            status_code: 201
+            return_content: yes
+            validate_certs: no
+          register: member_create_response
+
+        - name: Wait for member to be ACTIVE
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}/members/{{ member_create_response.json.member.id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: member_status
+          until: member_status.json.member.operating_status in ['ONLINE', 'ERROR']
+          retries: 30
+          delay: 5
 
         - name: Log member added
           debug:
@@ -131,10 +231,7 @@
             status_code: 200
             timeout: 10
             validate_certs: no
-          when:
-            - manageiq_notification_url is defined
-            - manageiq_auth_token is defined
-            - manageiq_user_id is defined
+          when: manageiq_notification_url is defined
           ignore_errors: yes
 
     # ========================================
@@ -150,14 +247,52 @@
               - member_name is defined
             fail_msg: "❌ Parametri mancanti per remove_member"
 
-        - name: Remove member from pool
-          openstack.cloud.lb_member:
-            name: "{{ member_name }}"
-            pool: "{{ pool_name }}"
-            state: absent
-            wait: yes
-            timeout: 300
-          register: member_remove_result
+        - name: Get pool ID by name
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/pools?name={{ pool_name }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: pool_response
+
+        - name: Extract pool ID
+          set_fact:
+            pool_id: "{{ pool_response.json.pools[0].id }}"
+          when: pool_response.json.pools | length > 0
+
+        - name: Get members from pool
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}/members"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: members_response
+
+        - name: Find member ID by name
+          set_fact:
+            member_id: "{{ item.id }}"
+          when: item.name == member_name
+          loop: "{{ members_response.json.members }}"
+
+        - name: Fail if member not found
+          fail:
+            msg: "❌ Member {{ member_name }} non trovato nel pool {{ pool_name }}"
+          when: member_id is not defined
+
+        - name: Delete member via API
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}/members/{{ member_id }}"
+            method: DELETE
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 204
+            validate_certs: no
 
         - name: Log member removed
           debug:
@@ -181,10 +316,7 @@
             status_code: 200
             timeout: 10
             validate_certs: no
-          when:
-            - manageiq_notification_url is defined
-            - manageiq_auth_token is defined
-            - manageiq_user_id is defined
+          when: manageiq_notification_url is defined
           ignore_errors: yes
 
     # ========================================
@@ -202,61 +334,72 @@
               - monitor_timeout is defined
             fail_msg: "❌ Parametri mancanti per update_monitor"
 
-        - name: Get all pools
-          openstack.cloud.lb_pool_info:
-          register: all_pools_result
+        - name: Get pool ID and check existing monitor
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/pools?name={{ pool_name }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: pool_response
 
-        - name: Find pool by name
+        - name: Extract pool info
           set_fact:
-            pool_info: "{{ all_pools_result.pools | selectattr('name', 'equalto', pool_name) | first | default(None) }}"
-
-        - name: Fail if pool not found
-          fail:
-            msg: "❌ Pool {{ pool_name }} non trovato"
-          when: pool_info is none
-
-        - name: Check if pool has existing health monitor
-          set_fact:
-            has_monitor: "{{ pool_info.health_monitor_id is defined and pool_info.health_monitor_id != '' }}"
-            existing_monitor_id: "{{ pool_info.health_monitor_id | default('') }}"
-
-        - name: Log existing monitor status
-          debug:
-            msg: "Pool {{ pool_name }} ha già un health monitor: {{ has_monitor }}"
+            pool_id: "{{ pool_response.json.pools[0].id }}"
+            existing_monitor_id: "{{ pool_response.json.pools[0].healthmonitor_id | default('') }}"
 
         - name: Delete existing health monitor if present
-          openstack.cloud.lb_health_monitor:
-            id: "{{ existing_monitor_id }}"
-            state: absent
-            wait: yes
-          when: has_monitor | bool
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/healthmonitors/{{ existing_monitor_id }}"
+            method: DELETE
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: [204, 404]
+            validate_certs: no
+          when: existing_monitor_id != ""
           ignore_errors: yes
 
-        - name: Wait for monitor deletion
-          pause:
-            seconds: 5
-          when: has_monitor | bool
+        - name: Build health monitor body
+          set_fact:
+            monitor_body:
+              healthmonitor:
+                name: "{{ lb_name }}-monitor"
+                type: "{{ monitor_type | upper }}"
+                delay: "{{ monitor_delay | int }}"
+                timeout: "{{ monitor_timeout | int }}"
+                max_retries: "{{ monitor_max_retries | default(3) | int }}"
+                max_retries_down: "{{ monitor_max_retries_down | default(3) | int }}"
+                pool_id: "{{ pool_id }}"
 
-        - name: Create new health monitor
-          openstack.cloud.lb_health_monitor:
-            name: "{{ lb_name }}-monitor"
-            pool: "{{ pool_name }}"
-            type: "{{ monitor_type | upper }}"
-            delay: "{{ monitor_delay | int }}"
-            timeout: "{{ monitor_timeout | int }}"
-            max_retries: "{{ monitor_max_retries | default(3) | int }}"
-            max_retries_down: "{{ monitor_max_retries_down | default(3) | int }}"
-            http_method: "{{ monitor_http_method | upper | default(omit) }}"
-            url_path: "{{ monitor_url_path | default(omit) }}"
-            expected_codes: "{{ monitor_expected_codes | default(omit) }}"
-            state: present
-            wait: yes
-            timeout: 300
-          register: monitor_create_result
+        - name: Add HTTP parameters if applicable
+          set_fact:
+            monitor_body: "{{ monitor_body | combine({'healthmonitor': monitor_body.healthmonitor | combine(http_params)}, recursive=True) }}"
+          vars:
+            http_params:
+              http_method: "{{ monitor_http_method | default('GET') | upper }}"
+              url_path: "{{ monitor_url_path | default('/') }}"
+              expected_codes: "{{ monitor_expected_codes | default('200') }}"
+          when: monitor_type | upper in ['HTTP', 'HTTPS']
+
+        - name: Create health monitor via API
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/healthmonitors"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+              Content-Type: application/json
+            body: "{{ monitor_body }}"
+            body_format: json
+            status_code: 201
+            return_content: yes
+            validate_certs: no
+          register: monitor_create_response
 
         - name: Log monitor created
           debug:
-            msg: "✅ Health Monitor creato/aggiornato per pool {{ pool_name }}"
+            msg: "✅ Health Monitor creato per pool {{ pool_name }}"
 
         - name: Notify monitor updated
           uri:
@@ -276,45 +419,57 @@
             status_code: 200
             timeout: 10
             validate_certs: no
-          when:
-            - manageiq_notification_url is defined
-            - manageiq_auth_token is defined
-            - manageiq_user_id is defined
+          when: manageiq_notification_url is defined
           ignore_errors: yes
 
     # ========================================
     # AZIONE: ASSIGN FLOATING IP
     # ========================================
-    - name: Assign Floating IP to Load Balancer
+    - name: Assign Floating IP
       when: action == 'assign_fip'
       block:
         - name: Validate assign_fip parameters
           assert:
             that:
-              - floating_ip_network is defined or floating_ip is defined
-            fail_msg: "❌ Specificare floating_ip_network o floating_ip"
+              - floating_ip is defined or floating_ip_pool is defined
+            fail_msg: "❌ Specificare floating_ip o floating_ip_pool"
 
-        - name: Create or allocate Floating IP
-          openstack.cloud.floating_ip:
-            network: "{{ floating_ip_network | default('external') }}"
-            floating_ip_address: "{{ floating_ip | default(omit) }}"
-            state: present
-          register: fip_create_result
-
-        - name: Attach Floating IP to Load Balancer VIP port
-          openstack.cloud.floating_ip:
-            floating_ip_address: "{{ fip_create_result.floating_ip.floating_ip_address }}"
-            port: "{{ lb_vip_port_id }}"
-            state: present
-          register: fip_attach_result
-
-        - name: Save Floating IP
+        - name: Get Neutron endpoint
           set_fact:
-            lb_floating_ip: "{{ fip_create_result.floating_ip.floating_ip_address }}"
+            neutron_endpoint: "{{ item.endpoints | selectattr('interface', 'equalto', 'public') | map(attribute='url') | first | default(item.endpoints | selectattr('interface', 'equalto', 'internal') | map(attribute='url') | first) }}"
+          when: item.type == 'network'
+          loop: "{{ service_catalog }}"
+          register: neutron_search
+
+        - name: Set Neutron URL
+          set_fact:
+            neutron_url: "{{ neutron_search.results | selectattr('ansible_facts', 'defined') | map(attribute='ansible_facts.neutron_endpoint') | select('defined') | first }}"
+
+        - name: Get or create Floating IP
+          uri:
+            url: "{{ neutron_url }}/v2.0/floatingips"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+              Content-Type: application/json
+            body:
+              floatingip:
+                floating_network_id: "{{ floating_ip_pool | default('external') }}"
+                floating_ip_address: "{{ floating_ip | default(omit) }}"
+                port_id: "{{ lb_vip_port_id }}"
+            body_format: json
+            status_code: [201, 409]
+            return_content: yes
+            validate_certs: no
+          register: fip_response
+
+        - name: Extract Floating IP
+          set_fact:
+            lb_floating_ip: "{{ fip_response.json.floatingip.floating_ip_address }}"
 
         - name: Log FIP assigned
           debug:
-            msg: "✅ Floating IP {{ lb_floating_ip }} assegnato al Load Balancer {{ lb_name }}"
+            msg: "✅ Floating IP {{ lb_floating_ip }} assegnato"
 
         - name: Notify FIP assigned
           uri:
@@ -334,40 +489,51 @@
             status_code: 200
             timeout: 10
             validate_certs: no
-          when:
-            - manageiq_notification_url is defined
-            - manageiq_auth_token is defined
-            - manageiq_user_id is defined
+          when: manageiq_notification_url is defined
           ignore_errors: yes
 
     # ========================================
     # AZIONE: REMOVE FLOATING IP
     # ========================================
-    - name: Remove Floating IP from Load Balancer
+    - name: Remove Floating IP
       when: action == 'remove_fip'
       block:
-        - name: Get all Floating IPs
-          openstack.cloud.floating_ip_info:
-          register: all_fips_result
-
-        - name: Find Floating IPs attached to VIP port
+        - name: Get Neutron endpoint
           set_fact:
-            attached_fips: "{{ all_fips_result.floating_ips | selectattr('port_id', 'equalto', lb_vip_port_id) | list }}"
+            neutron_endpoint: "{{ item.endpoints | selectattr('interface', 'equalto', 'public') | map(attribute='url') | first | default(item.endpoints | selectattr('interface', 'equalto', 'internal') | map(attribute='url') | first) }}"
+          when: item.type == 'network'
+          loop: "{{ service_catalog }}"
+          register: neutron_search
 
-        - name: Log attached FIPs count
-          debug:
-            msg: "Trovati {{ attached_fips | length }} Floating IP associati al Load Balancer"
+        - name: Set Neutron URL
+          set_fact:
+            neutron_url: "{{ neutron_search.results | selectattr('ansible_facts', 'defined') | map(attribute='ansible_facts.neutron_endpoint') | select('defined') | first }}"
 
-        - name: Detach Floating IPs
-          openstack.cloud.floating_ip:
-            floating_ip_address: "{{ item.floating_ip_address }}"
-            state: absent
-          loop: "{{ attached_fips }}"
-          when: attached_fips | length > 0
+        - name: Get Floating IPs attached to port
+          uri:
+            url: "{{ neutron_url }}/v2.0/floatingips?port_id={{ lb_vip_port_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: fips_response
+
+        - name: Delete Floating IPs
+          uri:
+            url: "{{ neutron_url }}/v2.0/floatingips/{{ item.id }}"
+            method: DELETE
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 204
+            validate_certs: no
+          loop: "{{ fips_response.json.floatingips }}"
+          when: fips_response.json.floatingips | length > 0
 
         - name: Log FIP removed
           debug:
-            msg: "✅ Floating IP rimosso dal Load Balancer {{ lb_name }}"
+            msg: "✅ Floating IP rimosso"
 
         - name: Notify FIP removed
           uri:
@@ -387,10 +553,7 @@
             status_code: 200
             timeout: 10
             validate_certs: no
-          when:
-            - manageiq_notification_url is defined
-            - manageiq_auth_token is defined
-            - manageiq_user_id is defined
+          when: manageiq_notification_url is defined
           ignore_errors: yes
 
     # ========================================
@@ -427,8 +590,5 @@
         status_code: 200
         timeout: 10
         validate_certs: no
-      when:
-        - manageiq_notification_url is defined
-        - manageiq_auth_token is defined
-        - manageiq_user_id is defined
+      when: manageiq_notification_url is defined
       ignore_errors: yes
