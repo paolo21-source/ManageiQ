@@ -7,8 +7,6 @@
 
   vars:
     action: "{{ action | default('add_member') }}"
-    # Nomi derivati
-    pool_name: "{{ pool_name | default(lb_name + '-pool') }}"
 
   tasks:
     # ========================================
@@ -54,24 +52,27 @@
       ignore_errors: yes
 
     # ========================================
-    # GET LOAD BALANCER INFO (con modulo Ansible)
+    # GET LOAD BALANCER INFO (usa loadbalancers_info - PLURALE)
     # ========================================
-    - name: Get Load Balancer details
-      openstack.cloud.loadbalancer_info:
-        loadbalancer: "{{ loadbalancer_id }}"
-      register: lb_info_result
+    - name: Get all Load Balancers and filter by ID
+      openstack.cloud.loadbalancers_info:
+      register: all_lbs_result
+
+    - name: Find Load Balancer by ID
+      set_fact:
+        lb_info: "{{ all_lbs_result.loadbalancers | selectattr('id', 'equalto', loadbalancer_id) | first }}"
 
     - name: Fail if Load Balancer not found
       fail:
         msg: "Load Balancer con ID {{ loadbalancer_id }} non trovato!"
-      when: lb_info_result.loadbalancer is not defined
+      when: lb_info is not defined or lb_info == None
 
     - name: Set Load Balancer facts
       set_fact:
-        lb_name: "{{ lb_info_result.loadbalancer.name }}"
-        lb_vip_address: "{{ lb_info_result.loadbalancer.vip_address }}"
-        lb_vip_port_id: "{{ lb_info_result.loadbalancer.vip_port_id }}"
-        lb_operating_status: "{{ lb_info_result.loadbalancer.operating_status }}"
+        lb_name: "{{ lb_info.name }}"
+        lb_vip_address: "{{ lb_info.vip_address }}"
+        lb_vip_port_id: "{{ lb_info.vip_port_id }}"
+        lb_operating_status: "{{ lb_info.operating_status }}"
 
     - name: Log Load Balancer info
       debug:
@@ -100,12 +101,12 @@
             name: "{{ member_name }}"
             pool: "{{ pool_name }}"
             address: "{{ member_address }}"
-            protocol_port: "{{ member_port }}"
+            protocol_port: "{{ member_port | int }}"
             subnet_id: "{{ member_subnet | default(omit) }}"
             weight: "{{ member_weight | default(1) | int }}"
             state: present
             wait: yes
-            timeout: 120
+            timeout: 300
           register: member_add_result
 
         - name: Log member added
@@ -149,24 +150,13 @@
               - member_name is defined
             fail_msg: "❌ Parametri mancanti per remove_member"
 
-        - name: Get member info
-          openstack.cloud.lb_member_info:
-            pool: "{{ pool_name }}"
-            name: "{{ member_name }}"
-          register: member_info_result
-
-        - name: Fail if member not found
-          fail:
-            msg: "❌ Member {{ member_name }} non trovato nel pool {{ pool_name }}"
-          when: member_info_result.member is not defined
-
         - name: Remove member from pool
           openstack.cloud.lb_member:
             name: "{{ member_name }}"
             pool: "{{ pool_name }}"
             state: absent
             wait: yes
-            timeout: 120
+            timeout: 300
           register: member_remove_result
 
         - name: Log member removed
@@ -212,18 +202,40 @@
               - monitor_timeout is defined
             fail_msg: "❌ Parametri mancanti per update_monitor"
 
-        - name: Get pool info to check existing monitor
+        - name: Get all pools
           openstack.cloud.lb_pool_info:
-            name: "{{ pool_name }}"
-          register: pool_info_result
+          register: all_pools_result
+
+        - name: Find pool by name
+          set_fact:
+            pool_info: "{{ all_pools_result.pools | selectattr('name', 'equalto', pool_name) | first | default(None) }}"
+
+        - name: Fail if pool not found
+          fail:
+            msg: "❌ Pool {{ pool_name }} non trovato"
+          when: pool_info is none
+
+        - name: Check if pool has existing health monitor
+          set_fact:
+            has_monitor: "{{ pool_info.health_monitor_id is defined and pool_info.health_monitor_id != '' }}"
+            existing_monitor_id: "{{ pool_info.health_monitor_id | default('') }}"
+
+        - name: Log existing monitor status
+          debug:
+            msg: "Pool {{ pool_name }} ha già un health monitor: {{ has_monitor }}"
 
         - name: Delete existing health monitor if present
           openstack.cloud.lb_health_monitor:
-            pool: "{{ pool_name }}"
+            id: "{{ existing_monitor_id }}"
             state: absent
             wait: yes
-          when: pool_info_result.pool.health_monitor_id is defined
+          when: has_monitor | bool
           ignore_errors: yes
+
+        - name: Wait for monitor deletion
+          pause:
+            seconds: 5
+          when: has_monitor | bool
 
         - name: Create new health monitor
           openstack.cloud.lb_health_monitor:
@@ -231,15 +243,15 @@
             pool: "{{ pool_name }}"
             type: "{{ monitor_type | upper }}"
             delay: "{{ monitor_delay | int }}"
-            health_monitor_timeout: "{{ monitor_timeout | int }}"
+            timeout: "{{ monitor_timeout | int }}"
             max_retries: "{{ monitor_max_retries | default(3) | int }}"
             max_retries_down: "{{ monitor_max_retries_down | default(3) | int }}"
-            http_method: "{{ monitor_http_method | default(omit) }}"
+            http_method: "{{ monitor_http_method | upper | default(omit) }}"
             url_path: "{{ monitor_url_path | default(omit) }}"
             expected_codes: "{{ monitor_expected_codes | default(omit) }}"
             state: present
             wait: yes
-            timeout: 120
+            timeout: 300
           register: monitor_create_result
 
         - name: Log monitor created
@@ -334,17 +346,24 @@
     - name: Remove Floating IP from Load Balancer
       when: action == 'remove_fip'
       block:
-        - name: Get Floating IPs attached to VIP port
+        - name: Get all Floating IPs
           openstack.cloud.floating_ip_info:
-            port: "{{ lb_vip_port_id }}"
-          register: fips_info
+          register: all_fips_result
+
+        - name: Find Floating IPs attached to VIP port
+          set_fact:
+            attached_fips: "{{ all_fips_result.floating_ips | selectattr('port_id', 'equalto', lb_vip_port_id) | list }}"
+
+        - name: Log attached FIPs count
+          debug:
+            msg: "Trovati {{ attached_fips | length }} Floating IP associati al Load Balancer"
 
         - name: Detach Floating IPs
           openstack.cloud.floating_ip:
             floating_ip_address: "{{ item.floating_ip_address }}"
             state: absent
-          loop: "{{ fips_info.floating_ips }}"
-          when: fips_info.floating_ips | length > 0
+          loop: "{{ attached_fips }}"
+          when: attached_fips | length > 0
 
         - name: Log FIP removed
           debug:
