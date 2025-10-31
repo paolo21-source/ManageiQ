@@ -328,27 +328,40 @@
         - name: Validate update_monitor parameters
           assert:
             that:
-              - pool_name is defined
               - monitor_type is defined
               - monitor_delay is defined
               - monitor_timeout is defined
             fail_msg: "❌ Parametri mancanti per update_monitor"
 
-        - name: Get pool ID and check existing monitor
+        - name: Get pools for this Load Balancer
           uri:
-            url: "{{ octavia_url }}/v2.0/lbaas/pools?name={{ pool_name }}"
+            url: "{{ octavia_url }}/v2.0/lbaas/pools?loadbalancer_id={{ loadbalancer_id }}"
             method: GET
             headers:
               X-Auth-Token: "{{ os_auth_token }}"
             status_code: 200
             return_content: yes
             validate_certs: no
-          register: pool_response
+          register: lb_pools_response
+
+        - name: Fail if no pools found
+          fail:
+            msg: "❌ Nessun pool trovato per questo Load Balancer"
+          when: lb_pools_response.json.pools | length == 0
+
+        - name: Use specified pool or first pool
+          set_fact:
+            target_pool: "{{ lb_pools_response.json.pools | selectattr('name', 'equalto', pool_name) | first if pool_name is defined else lb_pools_response.json.pools[0] }}"
 
         - name: Extract pool info
           set_fact:
-            pool_id: "{{ pool_response.json.pools[0].id }}"
-            existing_monitor_id: "{{ pool_response.json.pools[0].healthmonitor_id | default('') }}"
+            pool_id: "{{ target_pool.id }}"
+            pool_name: "{{ target_pool.name }}"
+            existing_monitor_id: "{{ target_pool.healthmonitor_id | default('') }}"
+
+        - name: Log pool selection
+          debug:
+            msg: "📋 Configurazione health monitor per pool: {{ pool_name }} (ID: {{ pool_id }})"
 
         - name: Delete existing health monitor if present
           uri:
