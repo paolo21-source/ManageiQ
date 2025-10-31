@@ -2,11 +2,14 @@
 - name: Modify OpenStack Load Balancer L4
   hosts: localhost
   gather_facts: no
-  
+  collections:
+    - openstack.cloud
+
   vars:
-    # Azione da eseguire
     action: "{{ action | default('add_member') }}"
-    
+    # Nomi derivati
+    pool_name: "{{ pool_name | default(lb_name + '-pool') }}"
+
   tasks:
     # ========================================
     # VALIDATION
@@ -17,10 +20,6 @@
           - loadbalancer_id is defined
           - loadbalancer_id | length > 0
           - action is defined
-          - openstack_auth_url is defined
-          - openstack_username is defined
-          - openstack_password is defined
-          - openstack_project_name is defined
         fail_msg: "ERRORE: Variabili richieste mancanti!"
 
     - name: Log start
@@ -48,42 +47,31 @@
         status_code: 200
         timeout: 10
         validate_certs: no
-      delegate_to: localhost
-      when: 
+      when:
         - manageiq_notification_url is defined
         - manageiq_auth_token is defined
+        - manageiq_user_id is defined
       ignore_errors: yes
 
     # ========================================
-    # GET LOAD BALANCER INFO (usando OpenStack CLI)
+    # GET LOAD BALANCER INFO (con modulo Ansible)
     # ========================================
-    - name: Set OpenStack auth environment
-      set_fact:
-        os_env:
-          OS_AUTH_URL: "{{ openstack_auth_url }}"
-          OS_USERNAME: "{{ openstack_username }}"
-          OS_PASSWORD: "{{ openstack_password }}"
-          OS_PROJECT_NAME: "{{ openstack_project_name }}"
-          OS_USER_DOMAIN_NAME: "{{ openstack_domain_name | default('Default') }}"
-          OS_PROJECT_DOMAIN_NAME: "{{ openstack_domain_name | default('Default') }}"
-
     - name: Get Load Balancer details
-      shell: |
-        openstack loadbalancer show {{ loadbalancer_id }} -f json
-      environment: "{{ os_env }}"
-      register: lb_info_raw
-      changed_when: false
+      openstack.cloud.loadbalancer_info:
+        loadbalancer: "{{ loadbalancer_id }}"
+      register: lb_info_result
 
-    - name: Parse Load Balancer info
-      set_fact:
-        lb_info: "{{ lb_info_raw.stdout | from_json }}"
+    - name: Fail if Load Balancer not found
+      fail:
+        msg: "Load Balancer con ID {{ loadbalancer_id }} non trovato!"
+      when: lb_info_result.loadbalancer is not defined
 
     - name: Set Load Balancer facts
       set_fact:
-        lb_name: "{{ lb_info.name }}"
-        lb_vip_address: "{{ lb_info.vip_address }}"
-        lb_vip_port_id: "{{ lb_info.vip_port_id }}"
-        lb_operating_status: "{{ lb_info.operating_status }}"
+        lb_name: "{{ lb_info_result.loadbalancer.name }}"
+        lb_vip_address: "{{ lb_info_result.loadbalancer.vip_address }}"
+        lb_vip_port_id: "{{ lb_info_result.loadbalancer.vip_port_id }}"
+        lb_operating_status: "{{ lb_info_result.loadbalancer.operating_status }}"
 
     - name: Log Load Balancer info
       debug:
@@ -108,16 +96,16 @@
             member_name: "{{ member_name | default('member-' + member_address | replace('.', '-')) }}"
 
         - name: Add member to pool
-          shell: |
-            openstack loadbalancer member create \
-              --name "{{ member_name }}" \
-              --address "{{ member_address }}" \
-              --protocol-port {{ member_port }} \
-              {% if member_subnet is defined %}--subnet {{ member_subnet }}{% endif %} \
-              --weight {{ member_weight | default(1) }} \
-              --wait \
-              {{ pool_name }}
-          environment: "{{ os_env }}"
+          openstack.cloud.lb_member:
+            name: "{{ member_name }}"
+            pool: "{{ pool_name }}"
+            address: "{{ member_address }}"
+            protocol_port: "{{ member_port }}"
+            subnet_id: "{{ member_subnet | default(omit) }}"
+            weight: "{{ member_weight | default(1) | int }}"
+            state: present
+            wait: yes
+            timeout: 120
           register: member_add_result
 
         - name: Log member added
@@ -142,7 +130,10 @@
             status_code: 200
             timeout: 10
             validate_certs: no
-          when: manageiq_notification_url is defined
+          when:
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
           ignore_errors: yes
 
     # ========================================
@@ -158,27 +149,24 @@
               - member_name is defined
             fail_msg: "❌ Parametri mancanti per remove_member"
 
-        - name: Get member ID
-          shell: |
-            openstack loadbalancer member list {{ pool_name }} -f json | \
-            jq -r '.[] | select(.name=="{{ member_name }}") | .id'
-          environment: "{{ os_env }}"
-          register: member_id_raw
-          changed_when: false
-
-        - name: Set member ID
-          set_fact:
-            member_id: "{{ member_id_raw.stdout | trim }}"
+        - name: Get member info
+          openstack.cloud.lb_member_info:
+            pool: "{{ pool_name }}"
+            name: "{{ member_name }}"
+          register: member_info_result
 
         - name: Fail if member not found
           fail:
             msg: "❌ Member {{ member_name }} non trovato nel pool {{ pool_name }}"
-          when: member_id == ""
+          when: member_info_result.member is not defined
 
         - name: Remove member from pool
-          shell: |
-            openstack loadbalancer member delete --wait {{ pool_name }} {{ member_id }}
-          environment: "{{ os_env }}"
+          openstack.cloud.lb_member:
+            name: "{{ member_name }}"
+            pool: "{{ pool_name }}"
+            state: absent
+            wait: yes
+            timeout: 120
           register: member_remove_result
 
         - name: Log member removed
@@ -203,7 +191,10 @@
             status_code: 200
             timeout: 10
             validate_certs: no
-          when: manageiq_notification_url is defined
+          when:
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
           ignore_errors: yes
 
     # ========================================
@@ -221,58 +212,34 @@
               - monitor_timeout is defined
             fail_msg: "❌ Parametri mancanti per update_monitor"
 
-        - name: Get pool ID
-          shell: |
-            openstack loadbalancer pool show {{ pool_name }} -f json | jq -r '.id'
-          environment: "{{ os_env }}"
-          register: pool_id_raw
-          changed_when: false
-
-        - name: Set pool ID
-          set_fact:
-            pool_id: "{{ pool_id_raw.stdout | trim }}"
-
-        - name: Check if health monitor exists
-          shell: |
-            openstack loadbalancer pool show {{ pool_name }} -f json | jq -r '.health_monitor_id'
-          environment: "{{ os_env }}"
-          register: existing_monitor_raw
-          changed_when: false
-          ignore_errors: yes
-
-        - name: Set monitor existence
-          set_fact:
-            monitor_exists: "{{ existing_monitor_raw.stdout | trim != '' and existing_monitor_raw.stdout | trim != 'null' }}"
-            existing_monitor_id: "{{ existing_monitor_raw.stdout | trim }}"
+        - name: Get pool info to check existing monitor
+          openstack.cloud.lb_pool_info:
+            name: "{{ pool_name }}"
+          register: pool_info_result
 
         - name: Delete existing health monitor if present
-          shell: |
-            openstack loadbalancer healthmonitor delete --wait {{ existing_monitor_id }}
-          environment: "{{ os_env }}"
-          when: monitor_exists
+          openstack.cloud.lb_health_monitor:
+            pool: "{{ pool_name }}"
+            state: absent
+            wait: yes
+          when: pool_info_result.pool.health_monitor_id is defined
           ignore_errors: yes
 
-        - name: Build healthmonitor command
-          set_fact:
-            hm_cmd: >-
-              openstack loadbalancer healthmonitor create
-              --name {{ lb_name }}-monitor
-              --type {{ monitor_type | upper }}
-              --delay {{ monitor_delay }}
-              --timeout {{ monitor_timeout }}
-              --max-retries {{ monitor_max_retries | default(3) }}
-              --max-retries-down {{ monitor_max_retries_down | default(3) }}
-              {% if monitor_type | upper in ['HTTP', 'HTTPS'] %}
-              {% if monitor_http_method is defined %}--http-method {{ monitor_http_method | upper }}{% endif %}
-              {% if monitor_url_path is defined %}--url-path {{ monitor_url_path }}{% endif %}
-              {% if monitor_expected_codes is defined %}--expected-codes {{ monitor_expected_codes }}{% endif %}
-              {% endif %}
-              --wait
-              {{ pool_name }}
-
-        - name: Create health monitor
-          shell: "{{ hm_cmd }}"
-          environment: "{{ os_env }}"
+        - name: Create new health monitor
+          openstack.cloud.lb_health_monitor:
+            name: "{{ lb_name }}-monitor"
+            pool: "{{ pool_name }}"
+            type: "{{ monitor_type | upper }}"
+            delay: "{{ monitor_delay | int }}"
+            health_monitor_timeout: "{{ monitor_timeout | int }}"
+            max_retries: "{{ monitor_max_retries | default(3) | int }}"
+            max_retries_down: "{{ monitor_max_retries_down | default(3) | int }}"
+            http_method: "{{ monitor_http_method | default(omit) }}"
+            url_path: "{{ monitor_url_path | default(omit) }}"
+            expected_codes: "{{ monitor_expected_codes | default(omit) }}"
+            state: present
+            wait: yes
+            timeout: 120
           register: monitor_create_result
 
         - name: Log monitor created
@@ -297,7 +264,10 @@
             status_code: 200
             timeout: 10
             validate_certs: no
-          when: manageiq_notification_url is defined
+          when:
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
           ignore_errors: yes
 
     # ========================================
@@ -309,33 +279,30 @@
         - name: Validate assign_fip parameters
           assert:
             that:
-              - floating_ip is defined or floating_ip_pool is defined
-            fail_msg: "❌ Specificare floating_ip o floating_ip_pool"
+              - floating_ip_network is defined or floating_ip is defined
+            fail_msg: "❌ Specificare floating_ip_network o floating_ip"
 
         - name: Create or allocate Floating IP
-          shell: |
-            {% if floating_ip is defined %}
-            openstack floating ip show {{ floating_ip }} -f json || \
-            openstack floating ip create {{ floating_ip_pool | default('external') }} --floating-ip-address {{ floating_ip }} -f json
-            {% else %}
-            openstack floating ip create {{ floating_ip_pool | default('external') }} -f json
-            {% endif %}
-          environment: "{{ os_env }}"
-          register: fip_create_raw
-
-        - name: Parse Floating IP
-          set_fact:
-            fip_address: "{{ (fip_create_raw.stdout | from_json).floating_ip_address }}"
+          openstack.cloud.floating_ip:
+            network: "{{ floating_ip_network | default('external') }}"
+            floating_ip_address: "{{ floating_ip | default(omit) }}"
+            state: present
+          register: fip_create_result
 
         - name: Attach Floating IP to Load Balancer VIP port
-          shell: |
-            openstack floating ip set --port {{ lb_vip_port_id }} {{ fip_address }}
-          environment: "{{ os_env }}"
+          openstack.cloud.floating_ip:
+            floating_ip_address: "{{ fip_create_result.floating_ip.floating_ip_address }}"
+            port: "{{ lb_vip_port_id }}"
+            state: present
           register: fip_attach_result
+
+        - name: Save Floating IP
+          set_fact:
+            lb_floating_ip: "{{ fip_create_result.floating_ip.floating_ip_address }}"
 
         - name: Log FIP assigned
           debug:
-            msg: "✅ Floating IP {{ fip_address }} assegnato al Load Balancer {{ lb_name }}"
+            msg: "✅ Floating IP {{ lb_floating_ip }} assegnato al Load Balancer {{ lb_name }}"
 
         - name: Notify FIP assigned
           uri:
@@ -348,14 +315,17 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Floating IP {{ fip_address }} assegnato al Load Balancer {{ lb_name }}"
+                message: "✅ Floating IP {{ lb_floating_ip }} assegnato al Load Balancer {{ lb_name }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
             status_code: 200
             timeout: 10
             validate_certs: no
-          when: manageiq_notification_url is defined
+          when:
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
           ignore_errors: yes
 
     # ========================================
@@ -365,22 +335,16 @@
       when: action == 'remove_fip'
       block:
         - name: Get Floating IPs attached to VIP port
-          shell: |
-            openstack floating ip list --port {{ lb_vip_port_id }} -f json
-          environment: "{{ os_env }}"
-          register: fips_raw
-          changed_when: false
-
-        - name: Parse Floating IPs
-          set_fact:
-            attached_fips: "{{ fips_raw.stdout | from_json }}"
+          openstack.cloud.floating_ip_info:
+            port: "{{ lb_vip_port_id }}"
+          register: fips_info
 
         - name: Detach Floating IPs
-          shell: |
-            openstack floating ip unset --port {{ item['Floating IP Address'] }}
-          environment: "{{ os_env }}"
-          loop: "{{ attached_fips }}"
-          when: attached_fips | length > 0
+          openstack.cloud.floating_ip:
+            floating_ip_address: "{{ item.floating_ip_address }}"
+            state: absent
+          loop: "{{ fips_info.floating_ips }}"
+          when: fips_info.floating_ips | length > 0
 
         - name: Log FIP removed
           debug:
@@ -404,7 +368,10 @@
             status_code: 200
             timeout: 10
             validate_certs: no
-          when: manageiq_notification_url is defined
+          when:
+            - manageiq_notification_url is defined
+            - manageiq_auth_token is defined
+            - manageiq_user_id is defined
           ignore_errors: yes
 
     # ========================================
@@ -421,7 +388,7 @@
           Azione:        {{ action }}
           VIP:           {{ lb_vip_address }}
           Status:        {{ lb_operating_status }}
-          {% if fip_address is defined %}Floating IP:   {{ fip_address }}{% endif %}
+          {% if lb_floating_ip is defined %}Floating IP:   {{ lb_floating_ip }}{% endif %}
 
     - name: Send final notification
       uri:
@@ -441,5 +408,8 @@
         status_code: 200
         timeout: 10
         validate_certs: no
-      when: manageiq_notification_url is defined
+      when:
+        - manageiq_notification_url is defined
+        - manageiq_auth_token is defined
+        - manageiq_user_id is defined
       ignore_errors: yes
