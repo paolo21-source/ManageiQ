@@ -1,10 +1,10 @@
 ---
-- name: Modify OpenStack Load Balancer L4 via API
+- name: Modify OpenStack Load Balancer L4 via API - COMPLETO
   hosts: localhost
   gather_facts: no
   
   vars:
-    action: "{{ action | default('add_member') }}"
+    action: "{{ action | default('update_lb') }}"
     
   tasks:
     # ========================================
@@ -20,7 +20,7 @@
           - openstack_username is defined
           - openstack_password is defined
           - openstack_project_name is defined
-        fail_msg: "ERRORE: Variabili richieste mancanti!"
+        fail_msg: "❌ ERRORE: Variabili richieste mancanti!"
 
     - name: Log start
       debug:
@@ -130,11 +130,358 @@
         lb_name: "{{ lb_response.json.loadbalancer.name }}"
         lb_vip_address: "{{ lb_response.json.loadbalancer.vip_address }}"
         lb_vip_port_id: "{{ lb_response.json.loadbalancer.vip_port_id }}"
+        lb_vip_subnet_id: "{{ lb_response.json.loadbalancer.vip_subnet_id }}"
         lb_operating_status: "{{ lb_response.json.loadbalancer.operating_status }}"
+        lb_provisioning_status: "{{ lb_response.json.loadbalancer.provisioning_status }}"
 
     - name: Log Load Balancer info
       debug:
         msg: "✅ Load Balancer: {{ lb_name }} (VIP: {{ lb_vip_address }}, Status: {{ lb_operating_status }})"
+
+    # ========================================
+    # AZIONE: UPDATE LOAD BALANCER
+    # ========================================
+    - name: Update Load Balancer properties
+      when: action == 'update_lb'
+      block:
+        - name: Build update body for Load Balancer
+          set_fact:
+            lb_update_body:
+              loadbalancer: {}
+
+        - name: Add name to update
+          set_fact:
+            lb_update_body: "{{ lb_update_body | combine({'loadbalancer': lb_update_body.loadbalancer | combine({'name': new_lb_name})}) }}"
+          when: new_lb_name is defined and new_lb_name != ""
+
+        - name: Add description to update
+          set_fact:
+            lb_update_body: "{{ lb_update_body | combine({'loadbalancer': lb_update_body.loadbalancer | combine({'description': new_lb_description})}) }}"
+          when: new_lb_description is defined
+
+        - name: Add admin_state_up to update
+          set_fact:
+            lb_update_body: "{{ lb_update_body | combine({'loadbalancer': lb_update_body.loadbalancer | combine({'admin_state_up': new_lb_admin_state | bool})}) }}"
+          when: new_lb_admin_state is defined
+
+        - name: Add vip_qos_policy_id to update
+          set_fact:
+            lb_update_body: "{{ lb_update_body | combine({'loadbalancer': lb_update_body.loadbalancer | combine({'vip_qos_policy_id': new_lb_qos_policy})}) }}"
+          when: new_lb_qos_policy is defined
+
+        - name: Update Load Balancer via API
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: PUT
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+              Content-Type: application/json
+            body: "{{ lb_update_body }}"
+            body_format: json
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_update_response
+          when: lb_update_body.loadbalancer | length > 0
+
+        - name: Wait for LB to be ACTIVE after update
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_status
+          until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
+          retries: 30
+          delay: 5
+
+        - name: Notify LB updated
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "update"
+              resource:
+                level: "success"
+                message: "✅ Load Balancer aggiornato con successo"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+            validate_certs: no
+          when: manageiq_notification_url is defined
+          ignore_errors: yes
+
+    # ========================================
+    # AZIONE: UPDATE LISTENER
+    # ========================================
+    - name: Update Listener properties
+      when: action == 'update_listener'
+      block:
+        - name: Validate listener parameters
+          assert:
+            that:
+              - listener_id is defined or listener_name is defined
+            fail_msg: "❌ Specificare listener_id o listener_name"
+
+        - name: Get listener ID by name if needed
+          block:
+            - name: Search listener by name
+              uri:
+                url: "{{ octavia_url }}/v2.0/lbaas/listeners?loadbalancer_id={{ loadbalancer_id }}&name={{ listener_name }}"
+                method: GET
+                headers:
+                  X-Auth-Token: "{{ os_auth_token }}"
+                status_code: 200
+                return_content: yes
+                validate_certs: no
+              register: listener_search
+
+            - name: Extract listener ID
+              set_fact:
+                listener_id: "{{ listener_search.json.listeners[0].id }}"
+              when: listener_search.json.listeners | length > 0
+          when: listener_id is not defined
+
+        - name: Build update body for Listener
+          set_fact:
+            listener_update_body:
+              listener: {}
+
+        - name: Add name to listener update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'name': new_listener_name})}) }}"
+          when: new_listener_name is defined and new_listener_name != ""
+
+        - name: Add description to listener update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'description': new_listener_description})}) }}"
+          when: new_listener_description is defined
+
+        - name: Add connection_limit to listener update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'connection_limit': new_listener_connection_limit | int})}) }}"
+          when: new_listener_connection_limit is defined
+
+        - name: Add timeout_client_data to listener update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'timeout_client_data': new_listener_timeout_client_data | int})}) }}"
+          when: new_listener_timeout_client_data is defined
+
+        - name: Add timeout_member_connect to listener update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'timeout_member_connect': new_listener_timeout_member_connect | int})}) }}"
+          when: new_listener_timeout_member_connect is defined
+
+        - name: Add timeout_member_data to listener update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'timeout_member_data': new_listener_timeout_member_data | int})}) }}"
+          when: new_listener_timeout_member_data is defined
+
+        - name: Add timeout_tcp_inspect to listener update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'timeout_tcp_inspect': new_listener_timeout_tcp_inspect | int})}) }}"
+          when: new_listener_timeout_tcp_inspect is defined
+
+        - name: Add admin_state_up to listener update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'admin_state_up': new_listener_admin_state | bool})}) }}"
+          when: new_listener_admin_state is defined
+
+        - name: Add default_pool_id to listener update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'default_pool_id': new_listener_default_pool_id})}) }}"
+          when: new_listener_default_pool_id is defined
+
+        - name: Add allowed_cidrs to listener update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'allowed_cidrs': new_listener_allowed_cidrs.split(',') | map('trim') | list})}) }}"
+          when: new_listener_allowed_cidrs is defined and new_listener_allowed_cidrs != ""
+
+        - name: Add insert_headers to listener update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'insert_headers': insert_headers_dict})}) }}"
+          vars:
+            insert_headers_dict: "{{ {} | combine({'X-Forwarded-For': 'true'} if new_listener_insert_x_forwarded_for | default(false) | bool else {}) | combine({'X-Forwarded-Port': 'true'} if new_listener_insert_x_forwarded_port | default(false) | bool else {}) | combine({'X-Forwarded-Proto': 'true'} if new_listener_insert_x_forwarded_proto | default(false) | bool else {}) }}"
+          when: new_listener_insert_x_forwarded_for is defined or new_listener_insert_x_forwarded_port is defined or new_listener_insert_x_forwarded_proto is defined
+
+        - name: Update Listener via API
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/listeners/{{ listener_id }}"
+            method: PUT
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+              Content-Type: application/json
+            body: "{{ listener_update_body }}"
+            body_format: json
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: listener_update_response
+          when: listener_update_body.listener | length > 0
+
+        - name: Wait for LB to be ACTIVE after listener update
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_status
+          until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
+          retries: 30
+          delay: 5
+
+        - name: Notify Listener updated
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "update"
+              resource:
+                level: "success"
+                message: "✅ Listener aggiornato con successo"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+            validate_certs: no
+          when: manageiq_notification_url is defined
+          ignore_errors: yes
+
+    # ========================================
+    # AZIONE: UPDATE POOL
+    # ========================================
+    - name: Update Pool properties
+      when: action == 'update_pool'
+      block:
+        - name: Validate pool parameters
+          assert:
+            that:
+              - pool_id is defined or pool_name is defined
+            fail_msg: "❌ Specificare pool_id o pool_name"
+
+        - name: Get pool ID by name if needed
+          block:
+            - name: Search pool by name
+              uri:
+                url: "{{ octavia_url }}/v2.0/lbaas/pools?loadbalancer_id={{ loadbalancer_id }}&name={{ pool_name }}"
+                method: GET
+                headers:
+                  X-Auth-Token: "{{ os_auth_token }}"
+                status_code: 200
+                return_content: yes
+                validate_certs: no
+              register: pool_search
+
+            - name: Extract pool ID
+              set_fact:
+                pool_id: "{{ pool_search.json.pools[0].id }}"
+              when: pool_search.json.pools | length > 0
+          when: pool_id is not defined
+
+        - name: Build update body for Pool
+          set_fact:
+            pool_update_body:
+              pool: {}
+
+        - name: Add name to pool update
+          set_fact:
+            pool_update_body: "{{ pool_update_body | combine({'pool': pool_update_body.pool | combine({'name': new_pool_name})}) }}"
+          when: new_pool_name is defined and new_pool_name != ""
+
+        - name: Add description to pool update
+          set_fact:
+            pool_update_body: "{{ pool_update_body | combine({'pool': pool_update_body.pool | combine({'description': new_pool_description})}) }}"
+          when: new_pool_description is defined
+
+        - name: Add lb_algorithm to pool update
+          set_fact:
+            pool_update_body: "{{ pool_update_body | combine({'pool': pool_update_body.pool | combine({'lb_algorithm': new_pool_algorithm | upper})}) }}"
+          when: new_pool_algorithm is defined
+
+        - name: Add session_persistence to pool update
+          set_fact:
+            pool_update_body: "{{ pool_update_body | combine({'pool': pool_update_body.pool | combine({'session_persistence': {'type': new_pool_session_persistence | upper}})}) }}"
+          when: new_pool_session_persistence is defined and new_pool_session_persistence != "None"
+
+        - name: Remove session_persistence if None
+          set_fact:
+            pool_update_body: "{{ pool_update_body | combine({'pool': pool_update_body.pool | combine({'session_persistence': none})}) }}"
+          when: new_pool_session_persistence is defined and new_pool_session_persistence == "None"
+
+        - name: Add admin_state_up to pool update
+          set_fact:
+            pool_update_body: "{{ pool_update_body | combine({'pool': pool_update_body.pool | combine({'admin_state_up': new_pool_admin_state | bool})}) }}"
+          when: new_pool_admin_state is defined
+
+        - name: Add tls_enabled to pool update
+          set_fact:
+            pool_update_body: "{{ pool_update_body | combine({'pool': pool_update_body.pool | combine({'tls_enabled': new_pool_tls_enabled | bool})}) }}"
+          when: new_pool_tls_enabled is defined
+
+        - name: Update Pool via API
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}"
+            method: PUT
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+              Content-Type: application/json
+            body: "{{ pool_update_body }}"
+            body_format: json
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: pool_update_response
+          when: pool_update_body.pool | length > 0
+
+        - name: Wait for LB to be ACTIVE after pool update
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_status
+          until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
+          retries: 30
+          delay: 5
+
+        - name: Notify Pool updated
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "update"
+              resource:
+                level: "success"
+                message: "✅ Pool aggiornato con successo"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+            validate_certs: no
+          when: manageiq_notification_url is defined
+          ignore_errors: yes
 
     # ========================================
     # AZIONE: ADD MEMBER
@@ -145,7 +492,7 @@
         - name: Validate add_member parameters
           assert:
             that:
-              - pool_name is defined
+              - pool_name is defined or pool_id is defined
               - member_address is defined
               - member_port is defined
             fail_msg: "❌ Parametri mancanti per add_member"
@@ -154,25 +501,28 @@
           set_fact:
             member_name: "{{ member_name | default('member-' + member_address | replace('.', '-')) }}"
 
-        - name: Get pool ID by name
-          uri:
-            url: "{{ octavia_url }}/v2.0/lbaas/pools?name={{ pool_name }}"
-            method: GET
-            headers:
-              X-Auth-Token: "{{ os_auth_token }}"
-            status_code: 200
-            return_content: yes
-            validate_certs: no
-          register: pool_response
+        - name: Get pool ID by name if needed
+          block:
+            - name: Search pool by name
+              uri:
+                url: "{{ octavia_url }}/v2.0/lbaas/pools?name={{ pool_name }}"
+                method: GET
+                headers:
+                  X-Auth-Token: "{{ os_auth_token }}"
+                status_code: 200
+                return_content: yes
+                validate_certs: no
+              register: pool_response
 
-        - name: Extract pool ID
-          set_fact:
-            pool_id: "{{ pool_response.json.pools[0].id }}"
-          when: pool_response.json.pools | length > 0
+            - name: Extract pool ID
+              set_fact:
+                pool_id: "{{ pool_response.json.pools[0].id }}"
+              when: pool_response.json.pools | length > 0
+          when: pool_id is not defined
 
         - name: Fail if pool not found
           fail:
-            msg: "❌ Pool {{ pool_name }} non trovato"
+            msg: "❌ Pool non trovato"
           when: pool_id is not defined
 
         - name: Create member via API
@@ -188,30 +538,33 @@
                 address: "{{ member_address }}"
                 protocol_port: "{{ member_port | int }}"
                 weight: "{{ member_weight | default(1) | int }}"
-                subnet_id: "{{ member_subnet | default(omit) }}"
+                subnet_id: "{{ member_subnet_id | default(omit) }}"
+                monitor_address: "{{ member_monitor_address | default(omit) }}"
+                monitor_port: "{{ member_monitor_port | default(omit) }}"
+                backup: "{{ member_backup | default(false) | bool }}"
             body_format: json
             status_code: 201
             return_content: yes
             validate_certs: no
           register: member_create_response
 
-        - name: Wait for member to be ACTIVE
+        - name: Wait for LB to be ACTIVE after member add
           uri:
-            url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}/members/{{ member_create_response.json.member.id }}"
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
             method: GET
             headers:
               X-Auth-Token: "{{ os_auth_token }}"
             status_code: 200
             return_content: yes
             validate_certs: no
-          register: member_status
-          until: member_status.json.member.operating_status in ['ONLINE', 'ERROR']
+          register: lb_status
+          until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
           retries: 30
           delay: 5
 
         - name: Log member added
           debug:
-            msg: "✅ Member {{ member_name }} ({{ member_address }}:{{ member_port }}) aggiunto al pool {{ pool_name }}"
+            msg: "✅ Member {{ member_name }} ({{ member_address }}:{{ member_port }}) aggiunto"
 
         - name: Notify member added
           uri:
@@ -224,7 +577,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Backend server {{ member_name }} ({{ member_address }}:{{ member_port }}) aggiunto al pool {{ pool_name }}"
+                message: "✅ Backend server {{ member_name }} ({{ member_address }}:{{ member_port }}) aggiunto"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -243,46 +596,52 @@
         - name: Validate remove_member parameters
           assert:
             that:
-              - pool_name is defined
-              - member_name is defined
+              - pool_name is defined or pool_id is defined
+              - member_name is defined or member_id is defined
             fail_msg: "❌ Parametri mancanti per remove_member"
 
-        - name: Get pool ID by name
-          uri:
-            url: "{{ octavia_url }}/v2.0/lbaas/pools?name={{ pool_name }}"
-            method: GET
-            headers:
-              X-Auth-Token: "{{ os_auth_token }}"
-            status_code: 200
-            return_content: yes
-            validate_certs: no
-          register: pool_response
+        - name: Get pool ID by name if needed
+          block:
+            - name: Search pool by name
+              uri:
+                url: "{{ octavia_url }}/v2.0/lbaas/pools?name={{ pool_name }}"
+                method: GET
+                headers:
+                  X-Auth-Token: "{{ os_auth_token }}"
+                status_code: 200
+                return_content: yes
+                validate_certs: no
+              register: pool_response
 
-        - name: Extract pool ID
-          set_fact:
-            pool_id: "{{ pool_response.json.pools[0].id }}"
-          when: pool_response.json.pools | length > 0
+            - name: Extract pool ID
+              set_fact:
+                pool_id: "{{ pool_response.json.pools[0].id }}"
+              when: pool_response.json.pools | length > 0
+          when: pool_id is not defined
 
-        - name: Get members from pool
-          uri:
-            url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}/members"
-            method: GET
-            headers:
-              X-Auth-Token: "{{ os_auth_token }}"
-            status_code: 200
-            return_content: yes
-            validate_certs: no
-          register: members_response
+        - name: Get member ID by name if needed
+          block:
+            - name: Get members from pool
+              uri:
+                url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}/members"
+                method: GET
+                headers:
+                  X-Auth-Token: "{{ os_auth_token }}"
+                status_code: 200
+                return_content: yes
+                validate_certs: no
+              register: members_response
 
-        - name: Find member ID by name
-          set_fact:
-            member_id: "{{ item.id }}"
-          when: item.name == member_name
-          loop: "{{ members_response.json.members }}"
+            - name: Find member ID by name
+              set_fact:
+                member_id: "{{ item.id }}"
+              when: item.name == member_name
+              loop: "{{ members_response.json.members }}"
+          when: member_id is not defined
 
         - name: Fail if member not found
           fail:
-            msg: "❌ Member {{ member_name }} non trovato nel pool {{ pool_name }}"
+            msg: "❌ Member non trovato"
           when: member_id is not defined
 
         - name: Delete member via API
@@ -294,9 +653,23 @@
             status_code: 204
             validate_certs: no
 
+        - name: Wait for LB to be ACTIVE after member removal
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_status
+          until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
+          retries: 30
+          delay: 5
+
         - name: Log member removed
           debug:
-            msg: "✅ Member {{ member_name }} rimosso dal pool {{ pool_name }}"
+            msg: "✅ Member rimosso dal pool"
 
         - name: Notify member removed
           uri:
@@ -309,7 +682,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Backend server {{ member_name }} rimosso dal pool {{ pool_name }}"
+                message: "✅ Backend server {{ member_name }} rimosso"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -320,7 +693,7 @@
           ignore_errors: yes
 
     # ========================================
-    # AZIONE: UPDATE HEALTH MONITOR
+    # AZIONE: UPDATE OR CREATE HEALTH MONITOR
     # ========================================
     - name: Update or create health monitor
       when: action == 'update_monitor'
@@ -328,40 +701,54 @@
         - name: Validate update_monitor parameters
           assert:
             that:
+              - pool_name is defined or pool_id is defined
               - monitor_type is defined
               - monitor_delay is defined
               - monitor_timeout is defined
+              - monitor_max_retries is defined
             fail_msg: "❌ Parametri mancanti per update_monitor"
 
-        - name: Get pools for this Load Balancer
-          uri:
-            url: "{{ octavia_url }}/v2.0/lbaas/pools?loadbalancer_id={{ loadbalancer_id }}"
-            method: GET
-            headers:
-              X-Auth-Token: "{{ os_auth_token }}"
-            status_code: 200
-            return_content: yes
-            validate_certs: no
-          register: lb_pools_response
+        - name: Get pool ID by name if needed
+          block:
+            - name: Search pool by name
+              uri:
+                url: "{{ octavia_url }}/v2.0/lbaas/pools?loadbalancer_id={{ loadbalancer_id }}&name={{ pool_name }}"
+                method: GET
+                headers:
+                  X-Auth-Token: "{{ os_auth_token }}"
+                status_code: 200
+                return_content: yes
+                validate_certs: no
+              register: pool_response
 
-        - name: Fail if no pools found
-          fail:
-            msg: "❌ Nessun pool trovato per questo Load Balancer"
-          when: lb_pools_response.json.pools | length == 0
+            - name: Extract pool info
+              set_fact:
+                pool_id: "{{ pool_response.json.pools[0].id }}"
+                existing_monitor_id: "{{ pool_response.json.pools[0].healthmonitor_id | default('') }}"
+              when: pool_response.json.pools | length > 0
+          when: pool_id is not defined
 
-        - name: Use specified pool or first pool
-          set_fact:
-            target_pool: "{{ lb_pools_response.json.pools | selectattr('name', 'equalto', pool_name) | first if pool_name is defined else lb_pools_response.json.pools[0] }}"
+        - name: Get existing monitor ID from pool if not provided
+          block:
+            - name: Get pool details
+              uri:
+                url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}"
+                method: GET
+                headers:
+                  X-Auth-Token: "{{ os_auth_token }}"
+                status_code: 200
+                return_content: yes
+                validate_certs: no
+              register: pool_details
 
-        - name: Extract pool info
-          set_fact:
-            pool_id: "{{ target_pool.id }}"
-            pool_name: "{{ target_pool.name }}"
-            existing_monitor_id: "{{ target_pool.healthmonitor_id | default('') }}"
+            - name: Extract existing monitor ID
+              set_fact:
+                existing_monitor_id: "{{ pool_details.json.pool.healthmonitor_id | default('') }}"
+          when: existing_monitor_id is not defined
 
         - name: Log pool selection
           debug:
-            msg: "📋 Configurazione health monitor per pool: {{ pool_name }} (ID: {{ pool_id }})"
+            msg: "📋 Configurazione health monitor per pool ID: {{ pool_id }} (Monitor esistente: {{ existing_monitor_id }})"
 
         - name: Delete existing health monitor if present
           uri:
@@ -374,15 +761,30 @@
           when: existing_monitor_id != ""
           ignore_errors: yes
 
+        - name: Wait for LB to be ACTIVE after monitor deletion
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_status
+          until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
+          retries: 30
+          delay: 5
+          when: existing_monitor_id != ""
+
         - name: Build health monitor body
           set_fact:
             monitor_body:
               healthmonitor:
-                name: "{{ lb_name }}-monitor"
+                name: "{{ monitor_name | default(lb_name + '-monitor') }}"
                 type: "{{ monitor_type | upper }}"
                 delay: "{{ monitor_delay | int }}"
                 timeout: "{{ monitor_timeout | int }}"
-                max_retries: "{{ monitor_max_retries | default(3) | int }}"
+                max_retries: "{{ monitor_max_retries | int }}"
                 max_retries_down: "{{ monitor_max_retries_down | default(3) | int }}"
                 pool_id: "{{ pool_id }}"
 
@@ -410,9 +812,23 @@
             validate_certs: no
           register: monitor_create_response
 
+        - name: Wait for LB to be ACTIVE after monitor creation
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_status
+          until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
+          retries: 30
+          delay: 5
+
         - name: Log monitor created
           debug:
-            msg: "✅ Health Monitor creato per pool {{ pool_name }}"
+            msg: "✅ Health Monitor ({{ monitor_type }}) creato/aggiornato"
 
         - name: Notify monitor updated
           uri:
@@ -425,7 +841,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Health Monitor ({{ monitor_type }}) configurato per pool {{ pool_name }}"
+                message: "✅ Health Monitor ({{ monitor_type }}) configurato"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -444,8 +860,8 @@
         - name: Validate assign_fip parameters
           assert:
             that:
-              - floating_ip is defined or floating_ip_pool is defined
-            fail_msg: "❌ Specificare floating_ip o floating_ip_pool"
+              - floating_ip is defined or floating_ip_network is defined
+            fail_msg: "❌ Specificare floating_ip o floating_ip_network"
 
         - name: Get Neutron endpoint
           set_fact:
@@ -458,7 +874,26 @@
           set_fact:
             neutron_url: "{{ neutron_search.results | selectattr('ansible_facts', 'defined') | map(attribute='ansible_facts.neutron_endpoint') | select('defined') | first }}"
 
-        - name: Get or create Floating IP
+        - name: Get external network ID if network name provided
+          block:
+            - name: Search network by name
+              uri:
+                url: "{{ neutron_url }}/v2.0/networks?name={{ floating_ip_network }}"
+                method: GET
+                headers:
+                  X-Auth-Token: "{{ os_auth_token }}"
+                status_code: 200
+                return_content: yes
+                validate_certs: no
+              register: network_search
+
+            - name: Extract network ID
+              set_fact:
+                floating_network_id: "{{ network_search.json.networks[0].id }}"
+              when: network_search.json.networks | length > 0
+          when: floating_ip_network is defined and floating_network_id is not defined
+
+        - name: Create or get Floating IP
           uri:
             url: "{{ neutron_url }}/v2.0/floatingips"
             method: POST
@@ -467,7 +902,7 @@
               Content-Type: application/json
             body:
               floatingip:
-                floating_network_id: "{{ floating_ip_pool | default('external') }}"
+                floating_network_id: "{{ floating_network_id }}"
                 floating_ip_address: "{{ floating_ip | default(omit) }}"
                 port_id: "{{ lb_vip_port_id }}"
             body_format: json
@@ -495,7 +930,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Floating IP {{ lb_floating_ip }} assegnato al Load Balancer {{ lb_name }}"
+                message: "✅ Floating IP {{ lb_floating_ip }} assegnato"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -559,7 +994,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Floating IP rimosso dal Load Balancer {{ lb_name }}"
+                message: "✅ Floating IP rimosso"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -596,7 +1031,7 @@
           action: "update"
           resource:
             level: "success"
-            message: "✅ Load Balancer {{ lb_name }} modificato con successo | Azione: {{ action }}"
+            message: "✅ Load Balancer modificato con successo | Azione: {{ action }}"
             subject_type: "User"
             subject_id: "{{ manageiq_user_id }}"
         body_format: json
