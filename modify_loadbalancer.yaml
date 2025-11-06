@@ -641,9 +641,9 @@
     # ========================================
 
         - name: Crea Listener
-          openstack.cloud.loadbalancer_listener:
+          openstack.cloud.lb_listener:
             cloud: "{{ openstack_cloud }}"
-            loadbalancer: "{{ loadbalancer_id }}"
+            load_balancer: "{{ loadbalancer_id }}"
             name: "{{ listener_name }}"
             protocol: "{{ listener_protocol }}"
             protocol_port: "{{ listener_port }}"
@@ -653,7 +653,7 @@
             timeout_member_connect: "{{ listener_timeout_member_connect | default(omit) }}"
             timeout_member_data: "{{ listener_timeout_member_data | default(omit) }}"
             timeout_tcp_inspect: "{{ listener_timeout_tcp_inspect | default(omit) }}"
-            admin_state_up: "{{ listener_admin_state | default(true) }}"
+            is_admin_state_up: "{{ listener_admin_state | default(true) }}"
             allowed_cidrs: "{{ listener_allowed_cidrs | default(omit) }}"
             state: present
           when: action == 'create_listener'
