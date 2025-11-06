@@ -20,11 +20,11 @@
           - openstack_username is defined
           - openstack_password is defined
           - openstack_project_name is defined
-        fail_msg: "❌ ERRORE: Variabili richieste mancanti!"
+        fail_msg: " ERRORE: Variabili richieste mancanti!"
 
     - name: Log start
       debug:
-        msg: "🚀 Modifica Load Balancer ID: {{ loadbalancer_id }} | Azione: {{ action }}"
+        msg: " Modifica Load Balancer ID: {{ loadbalancer_id }} | Azione: {{ action }}"
 
     # ========================================
     # NOTIFICA: INIZIO
@@ -40,7 +40,7 @@
           action: "update"
           resource:
             level: "info"
-            message: "🚀 Avvio modifica Load Balancer | Azione: {{ action }}"
+            message: " Avvio modifica Load Balancer | Azione: {{ action }}"
             subject_type: "User"
             subject_id: "{{ manageiq_user_id }}"
         body_format: json
@@ -102,12 +102,12 @@
 
     - name: Fail if Octavia not found
       fail:
-        msg: "❌ Servizio Octavia non trovato nel service catalog"
+        msg: " Servizio Octavia non trovato nel service catalog"
       when: octavia_url is not defined or octavia_url == ""
 
     - name: Log Octavia endpoint
       debug:
-        msg: "✅ Octavia endpoint: {{ octavia_url }}"
+        msg: " Octavia endpoint: {{ octavia_url }}"
 
     # ========================================
     # GET LOAD BALANCER INFO
@@ -134,7 +134,7 @@
 
     - name: Log Load Balancer info
       debug:
-        msg: "✅ Load Balancer: {{ lb_name }} (VIP: {{ lb_vip_address }}, Status: {{ lb_operating_status }})"
+        msg: " Load Balancer: {{ lb_name }} (VIP: {{ lb_vip_address }}, Status: {{ lb_operating_status }})"
 
     # ========================================
     # AZIONE: UPDATE LOAD BALANCER
@@ -147,7 +147,7 @@
             that:
               - new_lb_name is defined
               - new_lb_name | length > 0
-            fail_msg: "❌ Nome Load Balancer obbligatorio"
+            fail_msg: "Nome Load Balancer obbligatorio"
 
         - name: Build update body for Load Balancer
           set_fact:
@@ -204,7 +204,7 @@
 
         - name: Log LB updated
           debug:
-            msg: "✅ Load Balancer '{{ new_lb_name }}' aggiornato con successo"
+            msg: "Load Balancer '{{ new_lb_name }}' aggiornato con successo"
 
         - name: Notify LB updated
           uri:
@@ -217,7 +217,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Load Balancer '{{ new_lb_name }}' aggiornato con successo"
+                message: " Load Balancer '{{ new_lb_name }}' aggiornato con successo"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -236,9 +236,9 @@
         - name: Validate listener parameters
           assert:
             that:
-              - listener_id is defined
-              - listener_id | length > 0
-            fail_msg: "❌ Listener ID obbligatorio"
+              - listener_list is defined
+              - listener_list | length > 0
+            fail_msg: "❌ Listener list obbligatorio"
 
         - name: Log listener update
           debug:
