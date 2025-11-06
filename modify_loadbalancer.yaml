@@ -145,8 +145,8 @@
         - name: Validate update_lb parameters
           assert:
             that:
-              - lb_name is defined
-              - lb_name | length > 0
+              - new_lb_name is defined
+              - new_lb_name | length > 0
             fail_msg: "❌ Nome Load Balancer obbligatorio"
 
         - name: Build update body for Load Balancer
@@ -156,8 +156,8 @@
 
         - name: Add name to update
           set_fact:
-            lb_update_body: "{{ lb_update_body | combine({'loadbalancer': lb_update_body.loadbalancer | combine({'name': lb_name})}) }}"
-          when: lb_name is defined and lb_name | length > 0
+            lb_update_body: "{{ lb_update_body | combine({'loadbalancer': lb_update_body.loadbalancer | combine({'name': new_lb_name})}) }}"
+          when: new_lb_name is defined and new_lb_name | length > 0
 
         - name: Add description to update
           set_fact:
@@ -204,7 +204,7 @@
 
         - name: Log LB updated
           debug:
-            msg: "✅ Load Balancer '{{ lb_name }}' aggiornato con successo"
+            msg: "✅ Load Balancer '{{ new_lb_name }}' aggiornato con successo"
 
         - name: Notify LB updated
           uri:
@@ -217,7 +217,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Load Balancer '{{ lb_name }}' aggiornato con successo"
+                message: "✅ Load Balancer '{{ new_lb_name }}' aggiornato con successo"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
