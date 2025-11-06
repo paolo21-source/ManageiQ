@@ -656,7 +656,15 @@
             is_admin_state_up: "{{ listener_admin_state | default(true) }}"
             allowed_cidrs: "{{ listener_allowed_cidrs | default(omit) }}"
             state: present
-          when: action == 'create_listener'
+            wait: yes
+            timeout: 120
+          when: action | string | trim == 'create_listener'
+          register: listener_created
+
+        - name: Log Listener creation
+          debug:
+           msg: "Listener '{{ listener_name }}' creato!"
+          when: action | string | trim == 'create_listener'
           
     # ========================================
     # FINAL SUMMARY
