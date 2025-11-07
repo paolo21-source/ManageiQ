@@ -993,8 +993,8 @@
           set_fact:
             pool_name_for_monitor: "{{ pool_info_response.json.pool.name }}"
 
-        # Crea health monitor usando il modulo OpenStack
-        - name: Create Health Monitor using OpenStack module
+        # Crea health monitor per TCP/UDP/PING/TLS-HELLO/UDP-CONNECT (senza parametri HTTP)
+        - name: Create Health Monitor using OpenStack module (TCP/UDP/PING/TLS/UDP-CONNECT)
           openstack.cloud.lb_health_monitor:
             name: "{{ monitor_name }}"
             pool: "{{ pool_name_for_monitor }}"
@@ -1003,19 +1003,52 @@
             health_monitor_timeout: "{{ monitor_timeout | int }}"
             max_retries: "{{ monitor_max_retries | default(3) | int }}"
             max_retries_down: "{{ monitor_max_retries_down | default(3) | int }}"
-            http_method: "{{ monitor_http_method | upper | default(omit) }}"
-            url_path: "{{ monitor_url_path | default(omit) }}"
-            expected_codes: "{{ monitor_expected_codes | default(omit) }}"
             state: present
             wait: yes
             timeout: 120
-          register: monitor_created
+          register: monitor_created_basic
+          when: monitor_type | upper not in ['HTTP', 'HTTPS']
+
+        # Crea health monitor per HTTP/HTTPS (con parametri HTTP)
+        - name: Create Health Monitor using OpenStack module (HTTP/HTTPS)
+          openstack.cloud.lb_health_monitor:
+            name: "{{ monitor_name }}"
+            pool: "{{ pool_name_for_monitor }}"
+            type: "{{ monitor_type | upper }}"
+            delay: "{{ monitor_delay | int }}"
+            health_monitor_timeout: "{{ monitor_timeout | int }}"
+            max_retries: "{{ monitor_max_retries | default(3) | int }}"
+            max_retries_down: "{{ monitor_max_retries_down | default(3) | int }}"
+            http_method: "{{ monitor_http_method | default('GET') | upper }}"
+            url_path: "{{ monitor_url_path | default('/') }}"
+            expected_codes: "{{ monitor_expected_codes | default('200') }}"
+            state: present
+            wait: yes
+            timeout: 120
+          register: monitor_created_http
+          when: monitor_type | upper in ['HTTP', 'HTTPS']
+
+        # Combina i risultati
+        - name: Set monitor created result
+          set_fact:
+            monitor_created: "{{ monitor_created_basic if monitor_type | upper not in ['HTTP', 'HTTPS'] else monitor_created_http }}"
 
         - name: Extract created monitor ID
           set_fact:
             created_monitor_id: "{{ monitor_created.health_monitor.id }}"
 
-        # Aggiorna admin_state_up se fornito (non supportato direttamente dal modulo)
+        - name: Log monitor created
+          debug:
+            msg: "✅ Health Monitor base creato con ID: {{ created_monitor_id }}"
+
+        # Aggiorna admin_state_up se fornito (non supportato direttamente dal modulo in create)
+        - name: Build update body for admin state
+          set_fact:
+            monitor_update_body:
+              healthmonitor:
+                admin_state_up: "{{ monitor_admin_state | bool }}"
+          when: monitor_admin_state is defined
+
         - name: Update Health Monitor admin state via API
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/healthmonitors/{{ created_monitor_id }}"
@@ -1023,14 +1056,14 @@
             headers:
               X-Auth-Token: "{{ os_auth_token }}"
               Content-Type: application/json
-            body:
-              healthmonitor:
-                admin_state_up: "{{ monitor_admin_state | bool }}"
+            body: "{{ monitor_update_body }}"
             body_format: json
             status_code: 200
             return_content: yes
             validate_certs: no
-          when: monitor_admin_state is defined
+          when: 
+            - monitor_admin_state is defined
+            - monitor_update_body is defined
           register: monitor_updated
 
         - name: Wait for LB to be ACTIVE after monitor creation
