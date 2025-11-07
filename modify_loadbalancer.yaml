@@ -775,6 +775,258 @@
             validate_certs: no
           when: manageiq_notification_url is defined
           ignore_errors: yes
+
+    # ========================================
+    # AZIONE: CREATE POOL
+    # ========================================
+    - name: Create new Pool
+      when: action == 'create_pool'
+      block:
+        - name: Validate create pool parameters
+          assert:
+            that:
+              - pool_name is defined
+              - pool_name | length > 0
+              - pool_protocol is defined
+              - pool_lb_algorithm is defined
+            fail_msg: "❌ Parametri mancanti per create_pool"
+
+        - name: Log pool creation
+          debug:
+            msg: "➕ Creazione nuovo Pool '{{ pool_name }}' su LB ID {{ loadbalancer_id }}"
+
+        # Ottieni il nome del listener dall'ID (se fornito)
+        - name: Get Listener name from ID
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/listeners/{{ listener_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: listener_info_response
+          when: listener_id is defined
+
+        - name: Extract Listener name
+          set_fact:
+            listener_name_for_pool: "{{ listener_info_response.json.listener.name }}"
+          when: listener_id is defined
+
+        # Crea pool con parametri base supportati dal modulo
+        - name: Create Pool using OpenStack module (parametri base)
+          openstack.cloud.lb_pool:
+            name: "{{ pool_name }}"
+            listener: "{{ listener_name_for_pool | default(omit) }}"
+            protocol: "{{ pool_protocol | upper }}"
+            lb_algorithm: "{{ pool_lb_algorithm | upper }}"
+            description: "{{ pool_description | default(omit) }}"
+            state: present
+            wait: yes
+            timeout: 120
+          register: pool_created
+
+        - name: Extract created pool ID
+          set_fact:
+            created_pool_id: "{{ pool_created.pool.id }}"
+
+        - name: Log pool created (parametri base)
+          debug:
+            msg: "✅ Pool base creato con ID: {{ created_pool_id }}"
+
+        # Aggiorna pool con parametri avanzati via API
+        - name: Build update body for advanced pool parameters
+          set_fact:
+            pool_update_body:
+              pool: {}
+
+        - name: Add session_persistence to update
+          set_fact:
+            pool_update_body: "{{ pool_update_body | combine({'pool': pool_update_body.pool | combine({'session_persistence': {'type': pool_session_persistence | upper}})}) }}"
+          when: 
+            - pool_session_persistence is defined
+            - pool_session_persistence != "None"
+            - pool_session_persistence != ""
+
+        - name: Add tls_enabled to update
+          set_fact:
+            pool_update_body: "{{ pool_update_body | combine({'pool': pool_update_body.pool | combine({'tls_enabled': pool_tls_enabled | bool})}) }}"
+          when: pool_tls_enabled is defined
+
+        - name: Add admin_state_up to update
+          set_fact:
+            pool_update_body: "{{ pool_update_body | combine({'pool': pool_update_body.pool | combine({'admin_state_up': pool_admin_state | bool})}) }}"
+          when: pool_admin_state is defined
+
+        - name: Update Pool with advanced parameters via API
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ created_pool_id }}"
+            method: PUT
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+              Content-Type: application/json
+            body: "{{ pool_update_body }}"
+            body_format: json
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          when: pool_update_body.pool | length > 0
+          register: pool_updated
+
+        - name: Wait for LB to be ACTIVE after pool creation
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_status
+          until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
+          retries: 30
+          delay: 5
+
+        - name: Log Pool creation complete
+          debug:
+            msg: "✅ Pool '{{ pool_name }}' creato completamente con algoritmo {{ pool_lb_algorithm }}"
+
+        - name: Notify Pool created
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "create"
+              resource:
+                level: "success"
+                message: "✅ Pool '{{ pool_name }}' creato con algoritmo {{ pool_lb_algorithm }}"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+            validate_certs: no
+          when: manageiq_notification_url is defined
+          ignore_errors: yes
+
+    # ========================================
+    # AZIONE: CREATE HEALTH MONITOR
+    # ========================================
+    - name: Create new Health Monitor
+      when: action == 'create_monitor'
+      block:
+        - name: Validate create monitor parameters
+          assert:
+            that:
+              - monitor_name is defined
+              - monitor_name | length > 0
+              - pool_id is defined
+              - monitor_type is defined
+              - monitor_delay is defined
+              - monitor_timeout is defined
+            fail_msg: "❌ Parametri mancanti per create_monitor"
+
+        - name: Log health monitor creation
+          debug:
+            msg: "➕ Creazione Health Monitor '{{ monitor_name }}' su Pool ID {{ pool_id }}"
+
+        # Ottieni il nome del pool dall'ID
+        - name: Get Pool name from ID
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: pool_info_response
+
+        - name: Extract Pool name
+          set_fact:
+            pool_name_for_monitor: "{{ pool_info_response.json.pool.name }}"
+
+        # Crea health monitor usando il modulo OpenStack
+        - name: Create Health Monitor using OpenStack module
+          openstack.cloud.lb_health_monitor:
+            name: "{{ monitor_name }}"
+            pool: "{{ pool_name_for_monitor }}"
+            type: "{{ monitor_type | upper }}"
+            delay: "{{ monitor_delay | int }}"
+            health_monitor_timeout: "{{ monitor_timeout | int }}"
+            max_retries: "{{ monitor_max_retries | default(3) | int }}"
+            max_retries_down: "{{ monitor_max_retries_down | default(3) | int }}"
+            http_method: "{{ monitor_http_method | upper | default(omit) }}"
+            url_path: "{{ monitor_url_path | default(omit) }}"
+            expected_codes: "{{ monitor_expected_codes | default(omit) }}"
+            state: present
+            wait: yes
+            timeout: 120
+          register: monitor_created
+
+        - name: Extract created monitor ID
+          set_fact:
+            created_monitor_id: "{{ monitor_created.health_monitor.id }}"
+
+        # Aggiorna admin_state_up se fornito (non supportato direttamente dal modulo)
+        - name: Update Health Monitor admin state via API
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/healthmonitors/{{ created_monitor_id }}"
+            method: PUT
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+              Content-Type: application/json
+            body:
+              healthmonitor:
+                admin_state_up: "{{ monitor_admin_state | bool }}"
+            body_format: json
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          when: monitor_admin_state is defined
+          register: monitor_updated
+
+        - name: Wait for LB to be ACTIVE after monitor creation
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_status
+          until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
+          retries: 30
+          delay: 5
+
+        - name: Log Health Monitor creation complete
+          debug:
+            msg: "✅ Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato con successo"
+
+        - name: Notify Health Monitor created
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "create"
+              resource:
+                level: "success"
+                message: "✅ Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato - Delay: {{ monitor_delay }}s, Timeout: {{ monitor_timeout }}s"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+            validate_certs: no
+          when: manageiq_notification_url is defined
+          ignore_errors: yes
     # ========================================
     # FINAL SUMMARY
     # ========================================
