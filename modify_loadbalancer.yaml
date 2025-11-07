@@ -236,7 +236,7 @@
             that:
               - listener_list is defined
               - listener_list | length > 0
-            fail_msg: "❌ Listener list obbligatorio"
+            fail_msg: " Listener list obbligatorio"
 
         - name: Log listener update
           debug:
@@ -351,7 +351,7 @@
 
         - name: Log Listener updated
           debug:
-            msg: "✅ Listener '{{ new_listener_name }}' aggiornato con successo"
+            msg: " Listener '{{ new_listener_name }}' aggiornato con successo"
 
         - name: Notify Listener updated
           uri:
@@ -364,7 +364,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Listener '{{ new_listener_name }}' aggiornato con successo"
+                message: " Listener '{{ new_listener_name }}' aggiornato con successo"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -385,7 +385,7 @@
             that:
               - pool_id is defined
               - pool_id | length > 0
-            fail_msg: "❌ Pool ID obbligatorio"
+            fail_msg: " Pool ID obbligatorio"
 
         - name: Log pool update
           debug:
@@ -471,7 +471,7 @@
 
         - name: Log Pool updated
           debug:
-            msg: "✅ Pool '{{ new_pool_name }}' aggiornato con successo"
+            msg: " Pool '{{ new_pool_name }}' aggiornato con successo"
 
         - name: Notify Pool updated
           uri:
@@ -484,7 +484,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Pool '{{ new_pool_name }}' aggiornato con successo"
+                message: " Pool '{{ new_pool_name }}' aggiornato con successo"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -509,7 +509,7 @@
               - new_hm_delay is defined
               - new_hm_timeout is defined
               - new_hm_max_retries is defined
-            fail_msg: "❌ Parametri mancanti per update_health_monitor"
+            fail_msg: " Parametri mancanti per update_health_monitor"
 
         - name: Log health monitor update
           debug:
@@ -612,7 +612,7 @@
 
         - name: Log HM updated
           debug:
-            msg: "✅ Health Monitor ({{ new_hm_type }}) aggiornato con successo"
+            msg: " Health Monitor ({{ new_hm_type }}) aggiornato con successo"
 
         - name: Notify Health Monitor updated
           uri:
@@ -625,7 +625,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Health Monitor ({{ new_hm_type }}) aggiornato con successo"
+                message: " Health Monitor ({{ new_hm_type }}) aggiornato con successo"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -648,7 +648,7 @@
               - listener_protocol is defined
               - listener_port is defined
               - listener_port | int > 0
-            fail_msg: "❌ Parametri mancanti per create_listener"
+            fail_msg: " Parametri mancanti per create_listener"
 
         - name: Log listener creation
           debug:
@@ -692,7 +692,7 @@
 
         - name: Log listener created (parametri base)
           debug:
-            msg: "✅ Listener base creato con ID: {{ created_listener_id }}"
+            msg: " Listener base creato con ID: {{ created_listener_id }}"
 
         # Aggiorna listener con parametri avanzati via API
         - name: Build update body for advanced parameters
@@ -753,7 +753,7 @@
 
         - name: Log Listener creation complete
           debug:
-            msg: "✅ Listener '{{ listener_name }}' creato completamente su porta {{ listener_port }}"
+            msg: " Listener '{{ listener_name }}' creato completamente su porta {{ listener_port }}"
 
         - name: Notify Listener created
           uri:
@@ -766,7 +766,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: "✅ Listener '{{ listener_name }}' creato su porta {{ listener_port }}"
+                message: " Listener '{{ listener_name }}' creato su porta {{ listener_port }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -789,11 +789,11 @@
               - pool_name | length > 0
               - pool_protocol is defined
               - pool_lb_algorithm is defined
-            fail_msg: "❌ Parametri mancanti per create_pool"
+            fail_msg: " Parametri mancanti per create_pool"
 
         - name: Log pool creation
           debug:
-            msg: "➕ Creazione nuovo Pool '{{ pool_name }}' su LB ID {{ loadbalancer_id }}"
+            msg: " Creazione nuovo Pool '{{ pool_name }}' su LB ID {{ loadbalancer_id }}"
 
         # Controlla se il listener ha già un default pool (se listener_id fornito)
         - name: Check if listener has default pool
@@ -816,7 +816,7 @@
 
         - name: Log listener pool status
           debug:
-            msg: "⚠️ Listener ha già un default pool, creerò il pool standalone"
+            msg: " Listener ha già un default pool, creerò il pool standalone"
           when: 
             - listener_id is defined
             - listener_has_default_pool | default(false)
@@ -877,7 +877,7 @@
 
         - name: Log pool created (parametri base)
           debug:
-            msg: "✅ Pool base creato con ID: {{ created_pool_id }}"
+            msg: " Pool base creato con ID: {{ created_pool_id }}"
 
         # Aggiorna pool con parametri avanzati via API
         - name: Build update body for advanced pool parameters
@@ -934,7 +934,7 @@
 
         - name: Log Pool creation complete
           debug:
-            msg: "✅ Pool '{{ pool_name }}' creato completamente con algoritmo {{ pool_lb_algorithm }}{{ ' (standalone - da associare manualmente al listener)' if (listener_id is defined and listener_has_default_pool | default(false)) else '' }}"
+            msg: " Pool '{{ pool_name }}' creato completamente con algoritmo {{ pool_lb_algorithm }}{{ ' (standalone - da associare manualmente al listener)' if (listener_id is defined and listener_has_default_pool | default(false)) else '' }}"
 
         - name: Notify Pool created
           uri:
@@ -947,7 +947,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: "✅ Pool '{{ pool_name }}' creato con algoritmo {{ pool_lb_algorithm }}{{ ' - Listener ha già un pool, creato standalone' if (listener_id is defined and listener_has_default_pool | default(false)) else '' }}"
+                message: " Pool '{{ pool_name }}' creato con algoritmo {{ pool_lb_algorithm }}{{ ' - Listener ha già un pool, creato standalone' if (listener_id is defined and listener_has_default_pool | default(false)) else '' }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -1047,7 +1047,7 @@
 
         - name: Log monitor created
           debug:
-            msg: "✅ Health Monitor base creato con ID: {{ created_monitor_id }}"
+            msg: " Health Monitor base creato con ID: {{ created_monitor_id }}"
 
         # Aggiorna admin_state_up se fornito (non supportato direttamente dal modulo in create)
         - name: Build update body for admin state
@@ -1090,7 +1090,7 @@
 
         - name: Log Health Monitor creation complete
           debug:
-            msg: "✅ Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato con successo"
+            msg: " Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato con successo"
 
         - name: Notify Health Monitor created
           uri:
@@ -1103,7 +1103,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: "✅ Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato - Delay: {{ monitor_delay }}s, Timeout: {{ monitor_timeout }}s"
+                message: " Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato - Delay: {{ monitor_delay }}s, Timeout: {{ monitor_timeout }}s"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -1112,6 +1112,150 @@
             validate_certs: no
           when: manageiq_notification_url is defined
           ignore_errors: yes
+
+    # ========================================
+    # AZIONE: ADD MEMBER TO POOL
+    # ========================================
+    - name: Add member to pool
+      when: action == 'add_member'
+      block:
+        - name: Validate add member parameters
+          assert:
+            that:
+              - pool_id is defined
+              - pool_id | length > 0
+              - member_name is defined
+              - member_address is defined
+              - member_protocol_port is defined
+            fail_msg: " Parametri mancanti per add_member"
+
+        - name: Log member addition
+          debug:
+            msg: " Aggiunta membro '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) al Pool ID {{ pool_id }}"
+
+        # Ottieni il nome del pool dall'ID
+        - name: Get Pool name from ID
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: pool_info_response
+
+        - name: Extract Pool info
+          set_fact:
+            pool_name_for_member: "{{ pool_info_response.json.pool.name }}"
+            pool_subnet_id: "{{ pool_info_response.json.pool.subnet_id | default('') }}"
+
+        # Usa member_subnet se fornito, altrimenti usa il subnet del pool
+        - name: Set member subnet
+          set_fact:
+            final_member_subnet: "{{ member_subnet if member_subnet is defined else pool_subnet_id }}"
+
+        - name: Log subnet selection
+          debug:
+            msg: " Subnet per membro: {{ final_member_subnet }}"
+
+        # Aggiungi membro usando il modulo OpenStack
+        - name: Add member to pool using OpenStack module
+          openstack.cloud.lb_member:
+            name: "{{ member_name }}"
+            pool: "{{ pool_name_for_member }}"
+            address: "{{ member_address }}"
+            protocol_port: "{{ member_protocol_port | int }}"
+            subnet_id: "{{ final_member_subnet }}"
+            weight: "{{ member_weight | default(1) | int }}"
+            is_admin_state_up: true
+            state: present
+            wait: yes
+            timeout: 120
+          register: member_created
+
+        - name: Extract created member ID
+          set_fact:
+            created_member_id: "{{ member_created.member.id }}"
+
+        - name: Log member created
+          debug:
+            msg: " Membro base creato con ID: {{ created_member_id }}"
+
+        # Aggiorna parametri avanzati via API se necessario
+        - name: Build update body for advanced member parameters
+          set_fact:
+            member_update_body:
+              member: {}
+
+        - name: Add monitor_address/monitor_port if disabled
+          set_fact:
+            member_update_body: "{{ member_update_body | combine({'member': member_update_body.member | combine({'monitor_address': none, 'monitor_port': none})}) }}"
+          when: 
+            - member_monitor_enabled is defined
+            - not (member_monitor_enabled | bool)
+
+        - name: Add backup flag
+          set_fact:
+            member_update_body: "{{ member_update_body | combine({'member': member_update_body.member | combine({'backup': member_backup | bool})}) }}"
+          when: member_backup is defined
+
+        - name: Update Member with advanced parameters via API
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}/members/{{ created_member_id }}"
+            method: PUT
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+              Content-Type: application/json
+            body: "{{ member_update_body }}"
+            body_format: json
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          when: member_update_body.member | length > 0
+          register: member_updated
+
+        - name: Wait for LB to be ACTIVE after member addition
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_status
+          until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
+          retries: 30
+          delay: 5
+
+        - name: Log Member addition complete
+          debug:
+            msg: " Membro '{{ member_name }}' aggiunto al pool con successo"
+
+        - name: Notify Member added
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "create"
+              resource:
+                level: "success"
+                message: " Membro '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) aggiunto al pool"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+            validate_certs: no
+          when: manageiq_notification_url is defined
+          ignore_errors: yes
+
+
+          
     # ========================================
     # FINAL SUMMARY
     # ========================================
@@ -1138,7 +1282,7 @@
           action: "update"
           resource:
             level: "success"
-            message: "✅ Load Balancer modificato con successo | Azione: {{ action }}"
+            message: " Load Balancer modificato con successo | Azione: {{ action }}"
             subject_type: "User"
             subject_id: "{{ manageiq_user_id }}"
         body_format: json
