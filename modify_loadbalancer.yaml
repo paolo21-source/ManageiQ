@@ -795,8 +795,8 @@
           debug:
             msg: "➕ Creazione nuovo Pool '{{ pool_name }}' su LB ID {{ loadbalancer_id }}"
 
-        # Ottieni il nome del listener dall'ID (se fornito)
-        - name: Get Listener name from ID
+        # Controlla se il listener ha già un default pool (se listener_id fornito)
+        - name: Check if listener has default pool
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/listeners/{{ listener_id }}"
             method: GET
@@ -808,16 +808,24 @@
           register: listener_info_response
           when: listener_id is defined
 
-        - name: Extract Listener name
+        - name: Extract listener info
           set_fact:
+            listener_has_default_pool: "{{ listener_info_response.json.listener.default_pool_id is defined and listener_info_response.json.listener.default_pool_id != none }}"
             listener_name_for_pool: "{{ listener_info_response.json.listener.name }}"
           when: listener_id is defined
 
-        # Crea pool con parametri base supportati dal modulo
-        - name: Create Pool using OpenStack module (parametri base)
+        - name: Log listener pool status
+          debug:
+            msg: "⚠️ Listener ha già un default pool, creerò il pool standalone"
+          when: 
+            - listener_id is defined
+            - listener_has_default_pool | default(false)
+
+        # Crea pool SENZA listener se il listener ha già un pool, ALTRIMENTI con listener
+        - name: Create Pool using OpenStack module (con listener)
           openstack.cloud.lb_pool:
             name: "{{ pool_name }}"
-            listener: "{{ listener_name_for_pool | default(omit) }}"
+            listener: "{{ listener_name_for_pool }}"
             protocol: "{{ pool_protocol | upper }}"
             lb_algorithm: "{{ pool_lb_algorithm | upper }}"
             description: "{{ pool_description | default(omit) }}"
@@ -825,6 +833,43 @@
             wait: yes
             timeout: 120
           register: pool_created
+          when: 
+            - listener_id is defined
+            - not (listener_has_default_pool | default(false))
+
+        # Ottieni nome LB dall'ID per creare pool standalone
+        - name: Get Load Balancer name from ID
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_info_response
+          when: 
+            - listener_id is not defined or (listener_has_default_pool | default(false))
+
+        - name: Extract LB name
+          set_fact:
+            lb_name_for_pool: "{{ lb_info_response.json.loadbalancer.name }}"
+          when: 
+            - listener_id is not defined or (listener_has_default_pool | default(false))
+
+        - name: Create Pool using OpenStack module (standalone o se listener ha già pool)
+          openstack.cloud.lb_pool:
+            name: "{{ pool_name }}"
+            loadbalancer: "{{ lb_name_for_pool }}"
+            protocol: "{{ pool_protocol | upper }}"
+            lb_algorithm: "{{ pool_lb_algorithm | upper }}"
+            description: "{{ pool_description | default(omit) }}"
+            state: present
+            wait: yes
+            timeout: 120
+          register: pool_created
+          when: 
+            - listener_id is not defined or (listener_has_default_pool | default(false))
 
         - name: Extract created pool ID
           set_fact:
@@ -889,7 +934,7 @@
 
         - name: Log Pool creation complete
           debug:
-            msg: "✅ Pool '{{ pool_name }}' creato completamente con algoritmo {{ pool_lb_algorithm }}"
+            msg: "✅ Pool '{{ pool_name }}' creato completamente con algoritmo {{ pool_lb_algorithm }}{{ ' (standalone - da associare manualmente al listener)' if (listener_id is defined and listener_has_default_pool | default(false)) else '' }}"
 
         - name: Notify Pool created
           uri:
@@ -902,7 +947,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: "✅ Pool '{{ pool_name }}' creato con algoritmo {{ pool_lb_algorithm }}"
+                message: "✅ Pool '{{ pool_name }}' creato con algoritmo {{ pool_lb_algorithm }}{{ ' - Listener ha già un pool, creato standalone' if (listener_id is defined and listener_has_default_pool | default(false)) else '' }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -911,7 +956,6 @@
             validate_certs: no
           when: manageiq_notification_url is defined
           ignore_errors: yes
-
     # ========================================
     # AZIONE: CREATE HEALTH MONITOR
     # ========================================
