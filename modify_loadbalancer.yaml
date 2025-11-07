@@ -1028,14 +1028,22 @@
           register: monitor_created_http
           when: monitor_type | upper in ['HTTP', 'HTTPS']
 
-        # Combina i risultati
-        - name: Set monitor created result
+        # Estrai l'ID dal task che è stato effettivamente eseguito
+        - name: Extract created monitor ID from basic monitor
           set_fact:
-            monitor_created: "{{ monitor_created_basic if monitor_type | upper not in ['HTTP', 'HTTPS'] else monitor_created_http }}"
+            created_monitor_id: "{{ monitor_created_basic.health_monitor.id }}"
+          when: 
+            - monitor_type | upper not in ['HTTP', 'HTTPS']
+            - monitor_created_basic is defined
+            - monitor_created_basic is not skipped
 
-        - name: Extract created monitor ID
+        - name: Extract created monitor ID from HTTP monitor
           set_fact:
-            created_monitor_id: "{{ monitor_created.health_monitor.id }}"
+            created_monitor_id: "{{ monitor_created_http.health_monitor.id }}"
+          when: 
+            - monitor_type | upper in ['HTTP', 'HTTPS']
+            - monitor_created_http is defined
+            - monitor_created_http is not skipped
 
         - name: Log monitor created
           debug:
