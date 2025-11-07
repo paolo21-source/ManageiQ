@@ -634,164 +634,84 @@
             validate_certs: no
           when: manageiq_notification_url is defined
           ignore_errors: yes
+   # ========================================
+    # AZIONE: CREATE LISTENER (usando modulo collection)
     # ========================================
-    # CREATE LISTENER
-    # ========================================
+    - name: Create new Listener
+      when: action == 'create_listener'
+      block:
+        - name: Validate create listener parameters
+          assert:
+            that:
+              - listener_name is defined
+              - listener_name | length > 0
+              - listener_protocol is defined
+              - listener_port is defined
+              - listener_port | int > 0
+            fail_msg: "❌ Parametri mancanti per create_listener"
 
-        - name: Create new Listener
-          when: action == 'create_listener'
-          block:
-            - name: Validate create listener parameters
-              assert:
-                that:
-                  - listener_name is defined
-                  - listener_name | length > 0
-                  - listener_protocol is defined
-                  - listener_port is defined
-                  - listener_port | int > 0
-                fail_msg: "❌ Parametri mancanti per create_listener"
+        - name: Log listener creation
+          debug:
+            msg: "➕ Creazione nuovo Listener '{{ listener_name }}' su LB ID {{ loadbalancer_id }}"
 
-            - name: Log listener creation
-              debug:
-                msg: "➕ Creazione nuovo Listener '{{ listener_name }}' su LB {{ loadbalancer_id }}"
+        - name: Get Load Balancer name from ID
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_info_response
 
-            - name: Build create body for Listener
-              set_fact:
-                listener_create_body:
-                  listener:
-                    loadbalancer_id: "{{ loadbalancer_id }}"
-                    name: "{{ listener_name }}"
-                    protocol: "{{ listener_protocol | upper }}"
-                    protocol_port: "{{ listener_port | int }}"
+        - name: Extract LB name
+          set_fact:
+            lb_name_for_listener: "{{ lb_info_response.json.loadbalancer.name }}"
 
-            - name: Add optional fields to listener create
-              set_fact:
-                listener_create_body: >-
-                  {{
-                    listener_create_body | combine({
-                      'listener': listener_create_body.listener | combine({
-                        'description': listener_description
-                      })
-                    })
-                  }}
-              when: listener_description is defined and listener_description | length > 0
+        - name: Create Listener using OpenStack module
+          openstack.cloud.lb_listener:
+            name: "{{ listener_name }}"
+            load_balancer: "{{ lb_name_for_listener }}"
+            protocol: "{{ listener_protocol | upper }}"
+            protocol_port: "{{ listener_port | int }}"
+            description: "{{ listener_description | default(omit) }}"
+            connection_limit: "{{ listener_connection_limit | default(omit) }}"
+            timeout_client_data: "{{ listener_timeout_client_data | default(omit) }}"
+            timeout_member_connect: "{{ listener_timeout_member_connect | default(omit) }}"
+            timeout_member_data: "{{ listener_timeout_member_data | default(omit) }}"
+            timeout_tcp_inspect: "{{ listener_timeout_tcp_inspect | default(omit) }}"
+            is_admin_state_up: "{{ listener_admin_state | default(true) }}"
+            allowed_cidrs: "{{ listener_allowed_cidrs.split(',') | map('trim') | list if listener_allowed_cidrs is defined and listener_allowed_cidrs | length > 0 else omit }}"
+            state: present
+            wait: yes
+            timeout: 120
+          register: listener_created
 
-            - name: Add connection_limit
-              set_fact:
-                listener_create_body: >-
-                  {{
-                    listener_create_body | combine({
-                      'listener': listener_create_body.listener | combine({
-                        'connection_limit': listener_connection_limit | int
-                      })
-                    })
-                  }}
-              when: listener_connection_limit is defined
+        - name: Log Listener created
+          debug:
+            msg: "✅ Listener '{{ listener_name }}' creato con successo su porta {{ listener_port }}"
 
-            - name: Add timeouts
-              set_fact:
-                listener_create_body: >-
-                  {{
-                    listener_create_body | combine({
-                      'listener': listener_create_body.listener | combine({
-                        'timeout_client_data': listener_timeout_client_data | int,
-                        'timeout_member_connect': listener_timeout_member_connect | int,
-                        'timeout_member_data': listener_timeout_member_data | int,
-                        'timeout_tcp_inspect': listener_timeout_tcp_inspect | int
-                      })
-                    })
-                  }}
-              when:
-                - listener_timeout_client_data is defined
-                - listener_timeout_member_connect is defined
-
-            - name: Add admin_state_up
-              set_fact:
-                listener_create_body: >-
-                  {{
-                    listener_create_body | combine({
-                      'listener': listener_create_body.listener | combine({
-                        'admin_state_up': listener_admin_state | bool
-                      })
-                    })
-                  }}
-              when: listener_admin_state is defined
-
-            - name: Add allowed_cidrs
-              set_fact:
-                listener_create_body: >-
-                  {{
-                    listener_create_body | combine({
-                      'listener': listener_create_body.listener | combine({
-                        'allowed_cidrs': listener_allowed_cidrs.split(',') | map('trim') | list
-                      })
-                    })
-                  }}
-              when:
-                - listener_allowed_cidrs is defined
-                - listener_allowed_cidrs | length > 0
-
-            - name: Log create body
-              debug:
-                msg: "Create body: {{ listener_create_body }}"
-
-            - name: Create Listener via API
-              uri:
-                url: "{{ octavia_url }}/v2.0/lbaas/listeners"
-                method: POST
-                headers:
-                  X-Auth-Token: "{{ os_auth_token }}"
-                  Content-Type: application/json
-                body: "{{ listener_create_body }}"
-                body_format: json
-                status_code: 201
-                return_content: yes
-                validate_certs: no
-              register: listener_create_response
-
-            - name: Set created listener ID
-              set_fact:
-                created_listener_id: "{{ listener_create_response.json.listener.id }}"
-
-            - name: Wait for LB to be ACTIVE after listener creation
-              uri:
-                url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
-                method: GET
-                headers:
-                  X-Auth-Token: "{{ os_auth_token }}"
-                status_code: 200
-                return_content: yes
-                validate_certs: no
-              register: lb_status
-              until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
-              retries: 30
-              delay: 5
-
-            - name: Log Listener created
-              debug:
-                msg: "✅ Listener '{{ listener_name }}' creato con successo (ID: {{ created_listener_id }})"
-
-            - name: Notify Listener created
-              uri:
-                url: "{{ manageiq_notification_url }}"
-                method: POST
-                headers:
-                  X-Auth-Token: "{{ manageiq_auth_token }}"
-                  Content-Type: application/json
-                body:
-                  action: "create"
-                  resource:
-                    level: "success"
-                    message: "✅ Listener '{{ listener_name }}' creato su porta {{ listener_port }}"
-                    subject_type: "User"
-                    subject_id: "{{ manageiq_user_id }}"
-                body_format: json
-                status_code: 200
-                timeout: 10
-                validate_certs: no
-              when: manageiq_notification_url is defined
-              ignore_errors: yes
-          
+        - name: Notify Listener created
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "create"
+              resource:
+                level: "success"
+                message: "✅ Listener '{{ listener_name }}' creato su porta {{ listener_port }}"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+            validate_certs: no
+          when: manageiq_notification_url is defined
+          ignore_errors: yes
     # ========================================
     # FINAL SUMMARY
     # ========================================
