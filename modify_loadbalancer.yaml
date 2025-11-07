@@ -635,7 +635,7 @@
           when: manageiq_notification_url is defined
           ignore_errors: yes
    # ========================================
-    # AZIONE: CREATE LISTENER (usando modulo collection)
+    # AZIONE: CREATE LISTENER (approccio ibrido)
     # ========================================
     - name: Create new Listener
       when: action == 'create_listener'
@@ -654,6 +654,7 @@
           debug:
             msg: "➕ Creazione nuovo Listener '{{ listener_name }}' su LB ID {{ loadbalancer_id }}"
 
+        # Ottieni il nome del LB dall'ID
         - name: Get Load Balancer name from ID
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
@@ -669,28 +670,90 @@
           set_fact:
             lb_name_for_listener: "{{ lb_info_response.json.loadbalancer.name }}"
 
-        - name: Create Listener using OpenStack module
+        # Crea listener con parametri base (solo quelli supportati dal modulo)
+        - name: Create Listener using OpenStack module (parametri base)
           openstack.cloud.lb_listener:
             name: "{{ listener_name }}"
             load_balancer: "{{ lb_name_for_listener }}"
             protocol: "{{ listener_protocol | upper }}"
             protocol_port: "{{ listener_port | int }}"
             description: "{{ listener_description | default(omit) }}"
-            connection_limit: "{{ listener_connection_limit | default(omit) }}"
             timeout_client_data: "{{ listener_timeout_client_data | default(omit) }}"
-            timeout_member_connect: "{{ listener_timeout_member_connect | default(omit) }}"
             timeout_member_data: "{{ listener_timeout_member_data | default(omit) }}"
-            timeout_tcp_inspect: "{{ listener_timeout_tcp_inspect | default(omit) }}"
             is_admin_state_up: "{{ listener_admin_state | default(true) }}"
-            allowed_cidrs: "{{ listener_allowed_cidrs.split(',') | map('trim') | list if listener_allowed_cidrs is defined and listener_allowed_cidrs | length > 0 else omit }}"
             state: present
             wait: yes
             timeout: 120
           register: listener_created
 
-        - name: Log Listener created
+        - name: Extract created listener ID
+          set_fact:
+            created_listener_id: "{{ listener_created.listener.id }}"
+
+        - name: Log listener created (parametri base)
           debug:
-            msg: "✅ Listener '{{ listener_name }}' creato con successo su porta {{ listener_port }}"
+            msg: "✅ Listener base creato con ID: {{ created_listener_id }}"
+
+        # Aggiorna listener con parametri avanzati via API
+        - name: Build update body for advanced parameters
+          set_fact:
+            listener_update_body:
+              listener: {}
+
+        - name: Add connection_limit to update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'connection_limit': listener_connection_limit | int})}) }}"
+          when: listener_connection_limit is defined
+
+        - name: Add timeout_member_connect to update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'timeout_member_connect': listener_timeout_member_connect | int})}) }}"
+          when: listener_timeout_member_connect is defined
+
+        - name: Add timeout_tcp_inspect to update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'timeout_tcp_inspect': listener_timeout_tcp_inspect | int})}) }}"
+          when: listener_timeout_tcp_inspect is defined
+
+        - name: Add allowed_cidrs to update
+          set_fact:
+            listener_update_body: "{{ listener_update_body | combine({'listener': listener_update_body.listener | combine({'allowed_cidrs': listener_allowed_cidrs.split(',') | map('trim') | list})}) }}"
+          when:
+            - listener_allowed_cidrs is defined
+            - listener_allowed_cidrs | length > 0
+
+        - name: Update Listener with advanced parameters via API
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/listeners/{{ created_listener_id }}"
+            method: PUT
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+              Content-Type: application/json
+            body: "{{ listener_update_body }}"
+            body_format: json
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          when: listener_update_body.listener | length > 0
+          register: listener_updated
+
+        - name: Wait for LB to be ACTIVE after listener creation
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_status
+          until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
+          retries: 30
+          delay: 5
+
+        - name: Log Listener creation complete
+          debug:
+            msg: "✅ Listener '{{ listener_name }}' creato completamente su porta {{ listener_port }}"
 
         - name: Notify Listener created
           uri:
