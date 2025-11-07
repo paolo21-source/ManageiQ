@@ -234,8 +234,8 @@
         - name: Validate listener parameters
           assert:
             that:
-              - listener_list is defined
-              - listener_list | length > 0
+              - listener_id is defined
+              - listener_id | length > 0
             fail_msg: "❌ Listener list obbligatorio"
 
         - name: Log listener update
