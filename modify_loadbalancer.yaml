@@ -240,7 +240,7 @@
 
         - name: Log listener update
           debug:
-            msg: "📋 Aggiornamento Listener ID: {{ listener_id }}"
+            msg: " Aggiornamento Listener ID: {{ listener_id }}"
 
         - name: Build update body for Listener
           set_fact:
@@ -389,7 +389,7 @@
 
         - name: Log pool update
           debug:
-            msg: "📋 Aggiornamento Pool ID: {{ pool_id }}"
+            msg: " Aggiornamento Pool ID: {{ pool_id }}"
 
         - name: Build update body for Pool
           set_fact:
@@ -513,7 +513,7 @@
 
         - name: Log health monitor update
           debug:
-            msg: "📋 Aggiornamento Health Monitor ID: {{ health_monitor_id }} | Type: {{ new_hm_type }}"
+            msg: " Aggiornamento Health Monitor ID: {{ health_monitor_id }} | Type: {{ new_hm_type }}"
 
         - name: Build update body for Health Monitor
           set_fact:
@@ -971,7 +971,7 @@
               - monitor_type is defined
               - monitor_delay is defined
               - monitor_timeout is defined
-            fail_msg: "❌ Parametri mancanti per create_monitor"
+            fail_msg: " Parametri mancanti per create_monitor"
 
         - name: Log health monitor creation
           debug:
@@ -1114,7 +1114,7 @@
           ignore_errors: yes
 
 
-    # ========================================
+   # ========================================
     # AZIONE: ADD INTERNAL MEMBER TO POOL
     # ========================================
 
@@ -1136,6 +1136,26 @@
           debug:
             msg: " Aggiunta membro interno '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) al Pool ID {{ pool_id }}"
 
+        # Ottieni informazioni del Load Balancer per subnet
+        - name: Get Load Balancer info
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_info_response
+
+        - name: Extract LB subnet
+          set_fact:
+            lb_vip_subnet_id: "{{ lb_info_response.json.loadbalancer.vip_subnet_id }}"
+
+        - name: Log LB subnet
+          debug:
+            msg: " Load Balancer VIP Subnet: {{ lb_vip_subnet_id }}"
+
         # Ottieni informazioni del pool
         - name: Get Pool info from ID
           uri:
@@ -1153,9 +1173,14 @@
             pool_name_for_member: "{{ pool_info_response.json.pool.name }}"
             pool_subnet_id: "{{ pool_info_response.json.pool.subnet_id | default('') }}"
 
-        - name: Log pool info
+        # Usa pool subnet se disponibile, altrimenti usa LB subnet
+        - name: Determine subnet for member
+          set_fact:
+            final_subnet_id: "{{ pool_subnet_id if pool_subnet_id != '' else lb_vip_subnet_id }}"
+
+        - name: Log subnet selection
           debug:
-            msg: " Pool: {{ pool_name_for_member }} | Subnet: {{ pool_subnet_id }}"
+            msg: " Pool: {{ pool_name_for_member }} | Pool Subnet: {{ pool_subnet_id if pool_subnet_id != '' else 'N/A' }} | Subnet usato: {{ final_subnet_id }}"
 
         # Crea il body per la chiamata API diretta (più controllo sui parametri)
         - name: Build member create body
@@ -1165,7 +1190,7 @@
                 name: "{{ member_name }}"
                 address: "{{ member_address }}"
                 protocol_port: "{{ member_protocol_port | int }}"
-                subnet_id: "{{ pool_subnet_id }}"
+                subnet_id: "{{ final_subnet_id }}"
                 weight: "{{ member_weight | default(1) | int }}"
                 admin_state_up: "{{ member_admin_state | default(true) | bool }}"
 
