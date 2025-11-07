@@ -1113,13 +1113,16 @@
           when: manageiq_notification_url is defined
           ignore_errors: yes
 
+
     # ========================================
-    # AZIONE: ADD MEMBER TO POOL
+    # AZIONE: ADD INTERNAL MEMBER TO POOL
     # ========================================
-    - name: Add member to pool
-      when: action == 'add_member'
+
+    
+    - name: Add internal member to pool
+      when: action == 'add_internal_member'
       block:
-        - name: Validate add member parameters
+        - name: Validate add internal member parameters
           assert:
             that:
               - pool_id is defined
@@ -1127,14 +1130,14 @@
               - member_name is defined
               - member_address is defined
               - member_protocol_port is defined
-            fail_msg: " Parametri mancanti per add_member"
+            fail_msg: " Parametri mancanti per add_internal_member"
 
-        - name: Log member addition
+        - name: Log internal member addition
           debug:
-            msg: " Aggiunta membro '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) al Pool ID {{ pool_id }}"
+            msg: " Aggiunta membro interno '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) al Pool ID {{ pool_id }}"
 
-        # Ottieni il nome del pool dall'ID
-        - name: Get Pool name from ID
+        # Ottieni informazioni del pool
+        - name: Get Pool info from ID
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}"
             method: GET
@@ -1150,70 +1153,70 @@
             pool_name_for_member: "{{ pool_info_response.json.pool.name }}"
             pool_subnet_id: "{{ pool_info_response.json.pool.subnet_id | default('') }}"
 
-        # Usa member_subnet se fornito, altrimenti usa il subnet del pool
-        - name: Set member subnet
-          set_fact:
-            final_member_subnet: "{{ member_subnet if member_subnet is defined else pool_subnet_id }}"
-
-        - name: Log subnet selection
+        - name: Log pool info
           debug:
-            msg: " Subnet per membro: {{ final_member_subnet }}"
+            msg: " Pool: {{ pool_name_for_member }} | Subnet: {{ pool_subnet_id }}"
 
-        # Aggiungi membro usando il modulo OpenStack
-        - name: Add member to pool using OpenStack module
-          openstack.cloud.lb_member:
-            name: "{{ member_name }}"
-            pool: "{{ pool_name_for_member }}"
-            address: "{{ member_address }}"
-            protocol_port: "{{ member_protocol_port | int }}"
-            subnet_id: "{{ final_member_subnet }}"
-            weight: "{{ member_weight | default(1) | int }}"
-            is_admin_state_up: true
-            state: present
-            wait: yes
-            timeout: 120
+        # Crea il body per la chiamata API diretta (più controllo sui parametri)
+        - name: Build member create body
+          set_fact:
+            member_create_body:
+              member:
+                name: "{{ member_name }}"
+                address: "{{ member_address }}"
+                protocol_port: "{{ member_protocol_port | int }}"
+                subnet_id: "{{ pool_subnet_id }}"
+                weight: "{{ member_weight | default(1) | int }}"
+                admin_state_up: "{{ member_admin_state | default(true) | bool }}"
+
+        # Aggiungi monitor address/port se forniti
+        - name: Add monitor address to body
+          set_fact:
+            member_create_body: "{{ member_create_body | combine({'member': member_create_body.member | combine({'monitor_address': member_monitor_address})}) }}"
+          when: 
+            - member_monitor_address is defined
+            - member_monitor_address | length > 0
+
+        - name: Add monitor port to body
+          set_fact:
+            member_create_body: "{{ member_create_body | combine({'member': member_create_body.member | combine({'monitor_port': member_monitor_port | int})}) }}"
+          when: 
+            - member_monitor_port is defined
+            - member_monitor_port | int > 0
+
+        # Aggiungi backup flag se fornito
+        - name: Add backup flag to body
+          set_fact:
+            member_create_body: "{{ member_create_body | combine({'member': member_create_body.member | combine({'backup': member_backup | bool})}) }}"
+          when: 
+            - member_backup is defined
+
+        - name: Log create body
+          debug:
+            msg: " Create body: {{ member_create_body }}"
+
+        # Crea il membro via API diretta
+        - name: Create member via Octavia API
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}/members"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+              Content-Type: application/json
+            body: "{{ member_create_body }}"
+            body_format: json
+            status_code: 201
+            return_content: yes
+            validate_certs: no
           register: member_created
 
         - name: Extract created member ID
           set_fact:
-            created_member_id: "{{ member_created.member.id }}"
+            created_member_id: "{{ member_created.json.member.id }}"
 
         - name: Log member created
           debug:
-            msg: " Membro base creato con ID: {{ created_member_id }}"
-
-        # Aggiorna parametri avanzati via API se necessario
-        - name: Build update body for advanced member parameters
-          set_fact:
-            member_update_body:
-              member: {}
-
-        - name: Add monitor_address/monitor_port if disabled
-          set_fact:
-            member_update_body: "{{ member_update_body | combine({'member': member_update_body.member | combine({'monitor_address': none, 'monitor_port': none})}) }}"
-          when: 
-            - member_monitor_enabled is defined
-            - not (member_monitor_enabled | bool)
-
-        - name: Add backup flag
-          set_fact:
-            member_update_body: "{{ member_update_body | combine({'member': member_update_body.member | combine({'backup': member_backup | bool})}) }}"
-          when: member_backup is defined
-
-        - name: Update Member with advanced parameters via API
-          uri:
-            url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}/members/{{ created_member_id }}"
-            method: PUT
-            headers:
-              X-Auth-Token: "{{ os_auth_token }}"
-              Content-Type: application/json
-            body: "{{ member_update_body }}"
-            body_format: json
-            status_code: 200
-            return_content: yes
-            validate_certs: no
-          when: member_update_body.member | length > 0
-          register: member_updated
+            msg: " Membro interno creato con ID: {{ created_member_id }}"
 
         - name: Wait for LB to be ACTIVE after member addition
           uri:
@@ -1229,11 +1232,11 @@
           retries: 30
           delay: 5
 
-        - name: Log Member addition complete
+        - name: Log internal member addition complete
           debug:
-            msg: " Membro '{{ member_name }}' aggiunto al pool con successo"
+            msg: " Membro interno '{{ member_name }}' aggiunto al pool con successo"
 
-        - name: Notify Member added
+        - name: Notify internal member added
           uri:
             url: "{{ manageiq_notification_url }}"
             method: POST
@@ -1244,7 +1247,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: " Membro '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) aggiunto al pool"
+                message: " Membro interno '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) aggiunto al pool"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
