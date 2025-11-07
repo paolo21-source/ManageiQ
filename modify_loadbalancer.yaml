@@ -2,9 +2,7 @@
 - name: Modify OpenStack Load Balancer L4 - COMPLETO
   hosts: localhost
   gather_facts: no
-  
-  vars:
-    action: "{{ action | default('update_lb') }}"
+
     
   tasks:
     # ========================================
