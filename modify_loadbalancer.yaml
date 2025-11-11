@@ -494,26 +494,6 @@
           when: manageiq_notification_url is defined
           ignore_errors: yes
 
-
-        # ========================================
-        # DEBUG: LOG TUTTE LE VARIABILI
-        # ========================================
-        - name: DEBUG - Log action value
-          debug:
-            msg: "Action ricevuta: '{{ action }}'"
-
-        - name: DEBUG - Log all extra vars for update_monitor
-          debug:
-            msg:
-              - "health_monitor_id: {{ health_monitor_id | default('NOT DEFINED') }}"
-              - "new_hm_name: {{ new_hm_name | default('NOT DEFINED') }}"
-              - "new_hm_type: {{ new_hm_type | default('NOT DEFINED') }}"
-              - "new_hm_delay: {{ new_hm_delay | default('NOT DEFINED') }}"
-              - "new_hm_timeout: {{ new_hm_timeout | default('NOT DEFINED') }}"
-              - "new_hm_max_retries: {{ new_hm_max_retries | default('NOT DEFINED') }}"
-              - "new_hm_max_retries_down: {{ new_hm_max_retries_down | default('NOT DEFINED') }}"
-          when: action == 'update_monitor'
-
         # ========================================
         # AZIONE: UPDATE HEALTH MONITOR
         # ========================================
@@ -525,9 +505,6 @@
                 that:
                   - health_monitor_id is defined
                   - health_monitor_id | length > 0
-                  - new_hm_delay is defined
-                  - new_hm_timeout is defined
-                  - new_hm_max_retries is defined
                 fail_msg: "❌ Parametri mancanti per update_monitor"
 
             - name: Log health monitor update
