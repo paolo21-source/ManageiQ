@@ -516,6 +516,11 @@
             hm_update_body:
               healthmonitor: {}
 
+        - name: Add name to HM update
+          set_fact:
+            hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'name': new_hm_name})}) }}"
+          when: new_hm_name is defined and new_hm_name | length > 0
+
         - name: Add delay to HM update
           set_fact:
             hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'delay': new_hm_delay | int})}) }}"
