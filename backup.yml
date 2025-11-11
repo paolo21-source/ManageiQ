@@ -25,10 +25,10 @@
         success_msg: "Variables OK - volume_id: {{ volume_id }}, tenant: {{ tenant_name }}"
     
     # =============================================
-    # 2. RECUPERA NOME VOLUME (CON FALLBACK)
+    # 2. VERIFICA ESISTENZA VOLUME
     # =============================================
     
-    - name: Try to get volume info from OpenStack
+    - name: Check if volume exists in OpenStack
       block:
         - name: Get volume info
           openstack.cloud.volume_info:
@@ -39,23 +39,49 @@
           set_fact:
             volume_data: "{{ all_volumes.volumes | selectattr('id', 'equalto', volume_id) | first | default(None) }}"
         
+        - name: Check if volume was found
+          set_fact:
+            volume_exists: "{{ volume_data is not none }}"
+        
+        - name: Exit if volume doesn't exist
+          when: not volume_exists
+          block:
+            - name: Log missing volume
+              debug:
+                msg:
+                  - "=============================================="
+                  - "⚠ VOLUME NON TROVATO"
+                  - "=============================================="
+                  - "Volume ID: {{ volume_id }}"
+                  - "Tenant: {{ tenant_name }}"
+                  - "---"
+                  - "Il volume è stato probabilmente eliminato."
+                  - "Il backup schedule dovrebbe essere disabilitato."
+                  - "Uscita senza errori per non bloccare lo schedule."
+                  - "=============================================="
+            
+            - name: End playbook successfully (volume doesn't exist)
+              meta: end_play
+        
         - name: Set volume name from OpenStack
           set_fact:
             volume_name: "{{ volume_data.name }}"
-          when: volume_data is not none
+          when: volume_exists
         
         - name: Display success - volume found
           debug:
-            msg: "✓ Volume trovato in OpenStack: {{ volume_name }}"
+            msg: "✓ Volume trovato in OpenStack: {{ volume_name }} ({{ volume_id }})"
+          when: volume_exists
       
       rescue:
-        - name: Use fallback volume name
+        - name: Handle OpenStack API error
           debug:
-            msg: "⚠ Impossibile recuperare nome volume da OpenStack, uso fallback"
+            msg: "⚠ Errore accesso OpenStack API - impossibile verificare esistenza volume"
         
-        - name: Set fallback volume name
+        - name: Use fallback volume name
           set_fact:
             volume_name: "{{ backup_name | default('volume_' ~ volume_id[:8]) }}"
+            volume_exists: true  # Assume it exists and try the backup
     
     # =============================================
     # 3. GENERA NOME BACKUP FINALE
