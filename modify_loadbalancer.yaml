@@ -494,125 +494,125 @@
           when: manageiq_notification_url is defined
           ignore_errors: yes
 
-        # ========================================
-        # AZIONE: UPDATE HEALTH MONITOR
-        # ========================================
-        - name: Update Health Monitor properties
-          when: action == 'update_monitor'
-          block:
-            - name: Validate health monitor parameters
-              assert:
-                that:
-                  - hm_id is defined
-                  - hm_id | length > 0
-                fail_msg: "❌ Parametri mancanti per update_monitor"
+    # ========================================
+    # AZIONE: UPDATE HEALTH MONITOR
+    # ========================================
+    - name: Update Health Monitor properties
+      when: action == 'update_monitor'
+      block:
+        - name: Validate health monitor parameters
+          assert:
+            that:
+              - hm_id is defined
+              - hm_id | length > 0
+            fail_msg: "❌ Parametri mancanti per update_monitor"
 
-            - name: Log health monitor update
-              debug:
-                msg: "⚙️ Aggiornamento Health Monitor ID: {{ health_monitor_id }}"
+        - name: Log health monitor update
+          debug:
+            msg: "⚙️ Aggiornamento Health Monitor ID: {{ health_monitor_id }}"
 
-            - name: Build update body for Health Monitor
-              set_fact:
-                hm_update_body:
-                  healthmonitor: {}
+        - name: Build update body for Health Monitor
+          set_fact:
+            hm_update_body:
+              healthmonitor: {}
 
-            - name: Add delay to HM update
-              set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'delay': new_hm_delay | int})}) }}"
-              when: new_hm_delay is defined
+        - name: Add delay to HM update
+          set_fact:
+            hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'delay': new_hm_delay | int})}) }}"
+          when: new_hm_delay is defined
 
-            - name: Add timeout to HM update
-              set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'timeout': new_hm_timeout | int})}) }}"
-              when: new_hm_timeout is defined
+        - name: Add timeout to HM update
+          set_fact:
+            hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'timeout': new_hm_timeout | int})}) }}"
+          when: new_hm_timeout is defined
 
-            - name: Add max_retries to HM update
-              set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'max_retries': new_hm_max_retries | int})}) }}"
-              when: new_hm_max_retries is defined
+        - name: Add max_retries to HM update
+          set_fact:
+            hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'max_retries': new_hm_max_retries | int})}) }}"
+          when: new_hm_max_retries is defined
 
-            - name: Add max_retries_down to HM update
-              set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'max_retries_down': new_hm_max_retries_down | int})}) }}"
-              when: new_hm_max_retries_down is defined
+        - name: Add max_retries_down to HM update
+          set_fact:
+            hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'max_retries_down': new_hm_max_retries_down | int})}) }}"
+          when: new_hm_max_retries_down is defined
 
-            - name: Add admin_state_up to HM update
-              set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'admin_state_up': new_hm_admin_state | bool})}) }}"
-              when: new_hm_admin_state is defined
+        - name: Add admin_state_up to HM update
+          set_fact:
+            hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'admin_state_up': new_hm_admin_state | bool})}) }}"
+          when: new_hm_admin_state is defined
 
-            - name: Add http_method to HM update
-              set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'http_method': new_hm_http_method | upper})}) }}"
-              when: new_hm_http_method is defined
+        - name: Add http_method to HM update
+          set_fact:
+            hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'http_method': new_hm_http_method | upper})}) }}"
+          when: new_hm_http_method is defined
 
-            - name: Add url_path to HM update
-              set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'url_path': new_hm_url_path})}) }}"
-              when: new_hm_url_path is defined
+        - name: Add url_path to HM update
+          set_fact:
+            hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'url_path': new_hm_url_path})}) }}"
+          when: new_hm_url_path is defined
 
-            - name: Add expected_codes to HM update
-              set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'expected_codes': new_hm_expected_codes})}) }}"
-              when: new_hm_expected_codes is defined
+        - name: Add expected_codes to HM update
+          set_fact:
+            hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'expected_codes': new_hm_expected_codes})}) }}"
+          when: new_hm_expected_codes is defined
 
-            - name: Log update body
-              debug:
-                msg: "Update body: {{ hm_update_body }}"
+        - name: Log update body
+          debug:
+            msg: "Update body: {{ hm_update_body }}"
 
-            - name: Update Health Monitor via API
-              uri:
-                url: "{{ octavia_url }}/v2.0/lbaas/healthmonitors/{{ health_monitor_id }}"
-                method: PUT
-                headers:
-                  X-Auth-Token: "{{ os_auth_token }}"
-                  Content-Type: application/json
-                body: "{{ hm_update_body }}"
-                body_format: json
-                status_code: 200
-                return_content: yes
-                validate_certs: no
-              register: hm_update_response
-              when: hm_update_body.healthmonitor | length > 0
+        - name: Update Health Monitor via API
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/healthmonitors/{{ health_monitor_id }}"
+            method: PUT
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+              Content-Type: application/json
+            body: "{{ hm_update_body }}"
+            body_format: json
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: hm_update_response
+          when: hm_update_body.healthmonitor | length > 0
 
-            - name: Wait for LB to be ACTIVE after HM update
-              uri:
-                url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
-                method: GET
-                headers:
-                  X-Auth-Token: "{{ os_auth_token }}"
-                status_code: 200
-                return_content: yes
-                validate_certs: no
-              register: lb_status
-              until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
-              retries: 30
-              delay: 5
+        - name: Wait for LB to be ACTIVE after HM update
+          uri:
+            url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
+            method: GET
+            headers:
+              X-Auth-Token: "{{ os_auth_token }}"
+            status_code: 200
+            return_content: yes
+            validate_certs: no
+          register: lb_status
+          until: lb_status.json.loadbalancer.provisioning_status == 'ACTIVE'
+          retries: 30
+          delay: 5
 
-            - name: Log HM updated
-              debug:
-                msg: "✅ Health Monitor aggiornato"
+        - name: Log HM updated
+          debug:
+            msg: "✅ Health Monitor aggiornato"
 
-            - name: Notify Health Monitor updated
-              uri:
-                url: "{{ manageiq_notification_url }}"
-                method: POST
-                headers:
-                  X-Auth-Token: "{{ manageiq_auth_token }}"
-                  Content-Type: application/json
-                body:
-                  action: "update"
-                  resource:
-                    level: "success"
-                    message: "✅ Health Monitor aggiornato con successo"
-                    subject_type: "User"
-                    subject_id: "{{ manageiq_user_id }}"
-                body_format: json
-                status_code: 200
-                timeout: 10
-                validate_certs: no
-              when: manageiq_notification_url is defined
-              ignore_errors: yes
+        - name: Notify Health Monitor updated
+          uri:
+            url: "{{ manageiq_notification_url }}"
+            method: POST
+            headers:
+              X-Auth-Token: "{{ manageiq_auth_token }}"
+              Content-Type: application/json
+            body:
+              action: "update"
+              resource:
+                level: "success"
+                message: "✅ Health Monitor aggiornato con successo"
+                subject_type: "User"
+                subject_id: "{{ manageiq_user_id }}"
+            body_format: json
+            status_code: 200
+            timeout: 10
+            validate_certs: no
+          when: manageiq_notification_url is defined
+          ignore_errors: yes
 
 
 
