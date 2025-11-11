@@ -505,9 +505,9 @@
                 that:
                   - health_monitor_id is defined
                   - health_monitor_id | length > 0
-                  - hm_delay is defined
-                  - hm_to is defined
-                  - hm_mr is defined
+                  - new_hm_delay is defined
+                  - new_hm_timeout is defined
+                  - new_hm_max_retries is defined
                 fail_msg: "❌ Parametri mancanti per update_monitor"
 
             - name: Log health monitor update
@@ -519,57 +519,45 @@
                 hm_update_body:
                   healthmonitor: {}
 
-            # Nome (opzionale)
-            - name: Add name to HM update
-              set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'name': hm_name})}) }}"
-              when: hm_name is defined and hm_name | length > 0
-
-            # Delay
             - name: Add delay to HM update
               set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'delay': hm_delay | int})}) }}"
-              when: hm_delay is defined
+                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'delay': new_hm_delay | int})}) }}"
+              when: new_hm_delay is defined
 
-            # Timeout
             - name: Add timeout to HM update
               set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'timeout': hm_to | int})}) }}"
-              when: hm_to is defined
+                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'timeout': new_hm_timeout | int})}) }}"
+              when: new_hm_timeout is defined
 
-            # Max Retries
             - name: Add max_retries to HM update
               set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'max_retries': hm_mr | int})}) }}"
-              when: hm_mr is defined
+                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'max_retries': new_hm_max_retries | int})}) }}"
+              when: new_hm_max_retries is defined
 
-            # Max Retries Down
             - name: Add max_retries_down to HM update
               set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'max_retries_down': hm_mr_down | int})}) }}"
-              when: hm_mr_down is defined
+                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'max_retries_down': new_hm_max_retries_down | int})}) }}"
+              when: new_hm_max_retries_down is defined
 
-            # Admin State (opzionale)
             - name: Add admin_state_up to HM update
               set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'admin_state_up': hm_admin_state | bool})}) }}"
-              when: hm_admin_state is defined
+                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'admin_state_up': new_hm_admin_state | bool})}) }}"
+              when: new_hm_admin_state is defined
 
-            # Parametri HTTP/HTTPS (solo se presenti)
             - name: Add http_method to HM update
               set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'http_method': http_method | upper})}) }}"
-              when: http_method is defined and http_method | length > 0
+                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'http_method': new_hm_http_method | upper})}) }}"
+              when: new_hm_http_method is defined
 
             - name: Add url_path to HM update
               set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'url_path': url_path})}) }}"
-              when: url_path is defined and url_path | length > 0
+                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'url_path': new_hm_url_path})}) }}"
+              when: new_hm_url_path is defined
 
             - name: Add expected_codes to HM update
               set_fact:
-                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'expected_codes': expected_codes})}) }}"
-              when: expected_codes is defined and expected_codes | length > 0
+                hm_update_body: "{{ hm_update_body | combine({'healthmonitor': hm_update_body.healthmonitor | combine({'expected_codes': new_hm_expected_codes})}) }}"
+              when: new_hm_expected_codes is defined
 
             - name: Log update body
               debug:
@@ -606,7 +594,7 @@
 
             - name: Log HM updated
               debug:
-                msg: "✅ Health Monitor aggiornato con successo"
+                msg: "✅ Health Monitor aggiornato"
 
             - name: Notify Health Monitor updated
               uri:
@@ -628,6 +616,10 @@
                 validate_certs: no
               when: manageiq_notification_url is defined
               ignore_errors: yes
+
+
+
+
    # ========================================
     # AZIONE: CREATE LISTENER (approccio ibrido)
     # ========================================
