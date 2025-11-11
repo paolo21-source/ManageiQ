@@ -503,8 +503,8 @@
             - name: Validate health monitor parameters
               assert:
                 that:
-                  - health_monitor_id is defined
-                  - health_monitor_id | length > 0
+                  - hm_id is defined
+                  - hm_id | length > 0
                 fail_msg: "❌ Parametri mancanti per update_monitor"
 
             - name: Log health monitor update
