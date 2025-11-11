@@ -498,7 +498,7 @@
     # AZIONE: UPDATE HEALTH MONITOR
     # ========================================
     - name: Update Health Monitor properties
-      when: action == 'update_health_monitor'
+      when: action == 'update_monitor'
       block:
         - name: Validate health monitor parameters
           assert:
