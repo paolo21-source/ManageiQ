@@ -1,4 +1,3 @@
----
 - name: Create OpenStack Load Balancer L4 - Complete
   hosts: localhost
   gather_facts: no
@@ -23,24 +22,130 @@
   
   tasks:
     # ========================================
+    # VALIDATION
+    # ========================================
+    - name: Validate required variables
+      assert:
+        that:
+          - lb_name is defined
+          - lb_name | length > 0
+          - lb_subnet is defined
+          - listener_port is defined
+          - listener_port | int > 0
+          - listener_port | int < 65536
+        fail_msg: "ERRORE: Variabili richieste mancanti! Richieste: lb_name, lb_subnet, listener_port"
+
+    # ========================================
+    # AUTHENTICATE OPENSTACK KEYSTONE (MULTI-TENANT)
+    # ========================================
+    - name: Validate OpenStack credentials
+      assert:
+        that:
+          - openstack_auth_url is defined
+          - openstack_username is defined
+          - openstack_password is defined
+          - openstack_project_id is defined or openstack_project_name is defined
+        fail_msg: "❌ Credenziali OpenStack mancanti!"
+
+    - name: Determine authentication method
+      set_fact:
+        use_project_id: "{{ openstack_project_id is defined and openstack_project_id != '' }}"
+
+    - name: Log authentication
+      debug:
+        msg: "🔐 Autenticazione OpenStack: {{ 'Project ID (UUID)' if use_project_id else 'Project Name' }} = {{ openstack_project_id if use_project_id else openstack_project_name }}"
+
+    - name: Authenticate with project ID
+      uri:
+        url: "{{ openstack_auth_url }}/v3/auth/tokens"
+        method: POST
+        body:
+          auth:
+            identity:
+              methods:
+                - password
+              password:
+                user:
+                  name: "{{ openstack_username }}"
+                  domain:
+                    name: "{{ openstack_domain_name | default('Default') }}"
+                  password: "{{ openstack_password }}"
+            scope:
+              project:
+                id: "{{ openstack_project_id }}"
+        body_format: json
+        status_code: 201
+        return_content: yes
+        validate_certs: no
+      register: auth_with_id
+      when: use_project_id | bool
+
+    - name: Authenticate with project name
+      uri:
+        url: "{{ openstack_auth_url }}/v3/auth/tokens"
+        method: POST
+        body:
+          auth:
+            identity:
+              methods:
+                - password
+              password:
+                user:
+                  name: "{{ openstack_username }}"
+                  domain:
+                    name: "{{ openstack_domain_name | default('Default') }}"
+                  password: "{{ openstack_password }}"
+            scope:
+              project:
+                name: "{{ openstack_project_name }}"
+                domain:
+                  name: "{{ openstack_domain_name | default('Default') }}"
+        body_format: json
+        status_code: 201
+        return_content: yes
+        validate_certs: no
+      register: auth_with_name
+      when: not (use_project_id | bool)
+
+    - name: Set unified auth response
+      set_fact:
+        auth_response: "{{ auth_with_id if (auth_with_id is defined and not auth_with_id.skipped | default(false)) else auth_with_name }}"
+
+    - name: Extract auth token
+      set_fact:
+        os_auth_token: "{{ auth_response.x_subject_token }}"
+
+    - name: Parse service catalog
+      set_fact:
+        service_catalog: "{{ auth_response.json.token.catalog }}"
+
+    - name: Log successful authentication
+      debug:
+        msg: "✅ Autenticato su OpenStack | Tenant: {{ openstack_project_name | default(openstack_project_id) }}"
+
+    # ========================================
+    # CONFIGURE OPENSTACK CLIENT ENVIRONMENT
+    # ========================================
+    - name: Set OpenStack authentication environment
+      set_fact:
+        openstack_auth:
+          auth_url: "{{ openstack_auth_url }}"
+          username: "{{ openstack_username }}"
+          password: "{{ openstack_password }}"
+          project_id: "{{ openstack_project_id if (openstack_project_id is defined and openstack_project_id != '') else omit }}"
+          project_name: "{{ openstack_project_name if (openstack_project_id is not defined or openstack_project_id == '') else omit }}"
+          user_domain_name: "{{ openstack_domain_name | default('Default') }}"
+          project_domain_name: "{{ openstack_domain_name | default('Default') }}"
+
+    - name: Log OpenStack configuration
+      debug:
+        msg: "🔧 Configurazione OpenStack per moduli cloud | Project: {{ openstack_project_name | default(openstack_project_id) }}"
+
+    # ========================================
     # MAIN BLOCK CON RESCUE
     # ========================================
     - name: Main execution block
       block:
-        # ========================================
-        # VALIDATION
-        # ========================================
-        - name: Validate required variables
-          assert:
-            that:
-              - lb_name is defined
-              - lb_name | length > 0
-              - lb_subnet is defined
-              - listener_port is defined
-              - listener_port | int > 0
-              - listener_port | int < 65536
-            fail_msg: "ERRORE: Variabili richieste mancanti! Richieste: lb_name, lb_subnet, listener_port"
-
         # ========================================
         # NOTIFICA 1: INIZIO CREAZIONE
         # ========================================
@@ -103,6 +208,7 @@
         # ========================================
         - name: Optional cleanup - Remove existing Load Balancer
           openstack.cloud.loadbalancer:
+            auth: "{{ openstack_auth }}"
             name: "{{ lb_name }}"
             state: absent
             wait: yes
@@ -115,6 +221,7 @@
         # ========================================
         - name: Create Load Balancer
           openstack.cloud.loadbalancer:
+            auth: "{{ openstack_auth }}"
             name: "{{ lb_name }}"
             vip_subnet: "{{ lb_subnet }}"
             vip_address: "{{ lb_ip_address | default(omit) }}"
@@ -168,6 +275,7 @@
         # ========================================
         - name: Create Listener
           openstack.cloud.lb_listener:
+            auth: "{{ openstack_auth }}"
             name: "{{ listener_name }}"
             load_balancer: "{{ lb_name }}"
             protocol: "{{ listener_protocol | upper }}"
@@ -218,6 +326,7 @@
         # ========================================
         - name: Create Pool
           openstack.cloud.lb_pool:
+            auth: "{{ openstack_auth }}"
             name: "{{ pool_name }}"
             listener: "{{ listener_name }}"
             protocol: "{{ pool_protocol | upper }}"
@@ -255,6 +364,7 @@
 
             - name: Add members to pool
               openstack.cloud.lb_member:
+                auth: "{{ openstack_auth }}"
                 name: "{{ item.name }}"
                 pool: "{{ pool_name }}"
                 address: "{{ item.address }}"
@@ -320,6 +430,7 @@
           block:
             - name: Create Health Monitor
               openstack.cloud.lb_health_monitor:
+                auth: "{{ openstack_auth }}"
                 name: "{{ monitor_name }}"
                 pool: "{{ pool_name }}"
                 type: "{{ monitor_type | upper }}"
@@ -387,12 +498,14 @@
           block:
             - name: Create or get existing Floating IP
               openstack.cloud.floating_ip:
+                auth: "{{ openstack_auth }}"
                 network: "{{ floating_ip_network | default('external_pub_vlan20') }}"
                 state: present
               register: fip_created
 
             - name: Attach Floating IP to Load Balancer VIP port
               openstack.cloud.floating_ip:
+                auth: "{{ openstack_auth }}"
                 floating_ip_address: "{{ fip_created.floating_ip.floating_ip_address }}"
                 port: "{{ lb_vip_port_id }}"
                 state: present
@@ -455,6 +568,7 @@
       rescue:
         - name: Cleanup on failure
           openstack.cloud.loadbalancer:
+            auth: "{{ openstack_auth }}"
             name: "{{ lb_name }}"
             state: absent
             wait: yes
