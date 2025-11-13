@@ -52,7 +52,15 @@
     # ========================================
     # AUTHENTICATE OPENSTACK KEYSTONE (MULTI-TENANT)
     # ========================================
-    - name: Authenticate to OpenStack Keystone with project ID
+    - name: Determine authentication method
+      set_fact:
+        use_project_id: "{{ openstack_project_id is defined and openstack_project_id != '' }}"
+
+    - name: Log authentication method
+      debug:
+        msg: "🔐 Autenticazione: {{ 'Project ID (UUID): ' + openstack_project_id if use_project_id else 'Project Name: ' + openstack_project_name }}"
+
+    - name: Authenticate with project ID
       uri:
         url: "{{ openstack_auth_url }}/v3/auth/tokens"
         method: POST
@@ -74,12 +82,10 @@
         status_code: 201
         return_content: yes
         validate_certs: no
-      register: auth_response
-      when:
-        - openstack_project_id is defined
-        - openstack_project_id | length > 0
+      register: auth_with_id
+      when: use_project_id | bool
 
-    - name: Authenticate to OpenStack Keystone with project name (fallback)
+    - name: Authenticate with project name
       uri:
         url: "{{ openstack_auth_url }}/v3/auth/tokens"
         method: POST
@@ -103,10 +109,12 @@
         status_code: 201
         return_content: yes
         validate_certs: no
-      register: auth_response
-      when:
-        - openstack_project_id is not defined or openstack_project_id | length == 0
-        - openstack_project_name is defined
+      register: auth_with_name
+      when: not (use_project_id | bool)
+
+    - name: Set unified auth response
+      set_fact:
+        auth_response: "{{ auth_with_id if (auth_with_id is defined and not auth_with_id.skipped | default(false)) else auth_with_name }}"
 
     - name: Extract auth token
       set_fact:
@@ -115,6 +123,10 @@
     - name: Parse service catalog
       set_fact:
         service_catalog: "{{ auth_response.json.token.catalog }}"
+
+    - name: Log successful authentication
+      debug:
+        msg: "✅ Autenticato su OpenStack | Tenant: {{ openstack_project_name | default(openstack_project_id) }}"
 
     - name: Find Octavia endpoint
       set_fact:
