@@ -1,9 +1,8 @@
 ---
-- name: Modify OpenStack Load Balancer L4 - COMPLETO
+- name: Modify OpenStack Load Balancer L4 - MULTI-TENANT
   hosts: localhost
   gather_facts: no
 
-    
   tasks:
     # ========================================
     # VALIDATION
@@ -17,12 +16,12 @@
           - openstack_auth_url is defined
           - openstack_username is defined
           - openstack_password is defined
-          - openstack_project_name is defined
-        fail_msg: " ERRORE: Variabili richieste mancanti!"
+          - openstack_project_id is defined or openstack_project_name is defined
+        fail_msg: "❌ ERRORE: Variabili richieste mancanti!"
 
     - name: Log start
       debug:
-        msg: " Modifica Load Balancer ID: {{ loadbalancer_id }} | Azione: {{ action }}"
+        msg: "🚀 Modifica Load Balancer ID: {{ loadbalancer_id }} | Azione: {{ action }} | Tenant: {{ openstack_project_name | default(openstack_project_id) }}"
 
     # ========================================
     # NOTIFICA: INIZIO
@@ -38,7 +37,7 @@
           action: "update"
           resource:
             level: "info"
-            message: " Avvio modifica Load Balancer | Azione: {{ action }}"
+            message: "⚙️ Avvio modifica Load Balancer | Azione: {{ action }}"
             subject_type: "User"
             subject_id: "{{ manageiq_user_id }}"
         body_format: json
@@ -51,9 +50,36 @@
       ignore_errors: yes
 
     # ========================================
-    # AUTHENTICATE OPENSTACK KEYSTONE
+    # AUTHENTICATE OPENSTACK KEYSTONE (MULTI-TENANT)
     # ========================================
-    - name: Authenticate to OpenStack Keystone
+    - name: Authenticate to OpenStack Keystone with project ID
+      uri:
+        url: "{{ openstack_auth_url }}/v3/auth/tokens"
+        method: POST
+        body:
+          auth:
+            identity:
+              methods:
+                - password
+              password:
+                user:
+                  name: "{{ openstack_username }}"
+                  domain:
+                    name: "{{ openstack_domain_name | default('Default') }}"
+                  password: "{{ openstack_password }}"
+            scope:
+              project:
+                id: "{{ openstack_project_id }}"
+        body_format: json
+        status_code: 201
+        return_content: yes
+        validate_certs: no
+      register: auth_response
+      when:
+        - openstack_project_id is defined
+        - openstack_project_id | length > 0
+
+    - name: Authenticate to OpenStack Keystone with project name (fallback)
       uri:
         url: "{{ openstack_auth_url }}/v3/auth/tokens"
         method: POST
@@ -78,6 +104,9 @@
         return_content: yes
         validate_certs: no
       register: auth_response
+      when:
+        - openstack_project_id is not defined or openstack_project_id | length == 0
+        - openstack_project_name is defined
 
     - name: Extract auth token
       set_fact:
@@ -100,12 +129,12 @@
 
     - name: Fail if Octavia not found
       fail:
-        msg: " Servizio Octavia non trovato nel service catalog"
+        msg: "❌ Servizio Octavia non trovato nel service catalog"
       when: octavia_url is not defined or octavia_url == ""
 
     - name: Log Octavia endpoint
       debug:
-        msg: " Octavia endpoint: {{ octavia_url }}"
+        msg: "✅ Octavia endpoint: {{ octavia_url }}"
 
     # ========================================
     # GET LOAD BALANCER INFO
@@ -132,7 +161,7 @@
 
     - name: Log Load Balancer info
       debug:
-        msg: " Load Balancer: {{ lb_name }} (VIP: {{ lb_vip_address }}, Status: {{ lb_operating_status }})"
+        msg: "📋 Load Balancer: {{ lb_name }} (VIP: {{ lb_vip_address }}, Status: {{ lb_operating_status }})"
 
     # ========================================
     # AZIONE: UPDATE LOAD BALANCER
@@ -202,7 +231,7 @@
 
         - name: Log LB updated
           debug:
-            msg: "Load Balancer '{{ new_lb_name }}' aggiornato con successo"
+            msg: "✅ Load Balancer '{{ new_lb_name }}' aggiornato con successo"
 
         - name: Notify LB updated
           uri:
@@ -215,7 +244,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: " Load Balancer '{{ new_lb_name }}' aggiornato con successo"
+                message: "✅ Load Balancer '{{ new_lb_name }}' aggiornato con successo"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -236,11 +265,11 @@
             that:
               - listener_id is defined
               - listener_id | length > 0
-            fail_msg: " Listener list obbligatorio"
+            fail_msg: "❌ Listener ID obbligatorio"
 
         - name: Log listener update
           debug:
-            msg: " Aggiornamento Listener ID: {{ listener_id }}"
+            msg: "⚙️ Aggiornamento Listener ID: {{ listener_id }}"
 
         - name: Build update body for Listener
           set_fact:
@@ -351,7 +380,7 @@
 
         - name: Log Listener updated
           debug:
-            msg: " Listener '{{ new_listener_name }}' aggiornato con successo"
+            msg: "✅ Listener '{{ new_listener_name }}' aggiornato con successo"
 
         - name: Notify Listener updated
           uri:
@@ -364,7 +393,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: " Listener '{{ new_listener_name }}' aggiornato con successo"
+                message: "✅ Listener '{{ new_listener_name }}' aggiornato con successo"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -385,11 +414,11 @@
             that:
               - pool_id is defined
               - pool_id | length > 0
-            fail_msg: " Pool ID obbligatorio"
+            fail_msg: "❌ Pool ID obbligatorio"
 
         - name: Log pool update
           debug:
-            msg: " Aggiornamento Pool ID: {{ pool_id }}"
+            msg: "⚙️ Aggiornamento Pool ID: {{ pool_id }}"
 
         - name: Build update body for Pool
           set_fact:
@@ -471,7 +500,7 @@
 
         - name: Log Pool updated
           debug:
-            msg: " Pool '{{ new_pool_name }}' aggiornato con successo"
+            msg: "✅ Pool '{{ new_pool_name }}' aggiornato con successo"
 
         - name: Notify Pool updated
           uri:
@@ -484,7 +513,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: " Pool '{{ new_pool_name }}' aggiornato con successo"
+                message: "✅ Pool '{{ new_pool_name }}' aggiornato con successo"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -505,7 +534,7 @@
             that:
               - health_monitor_id is defined
               - health_monitor_id | length > 0
-            fail_msg: "❌ Parametri mancanti per update_monitor"
+            fail_msg: "❌ Health Monitor ID obbligatorio"
 
         - name: Log health monitor update
           debug:
@@ -619,11 +648,8 @@
           when: manageiq_notification_url is defined
           ignore_errors: yes
 
-
-
-
-   # ========================================
-    # AZIONE: CREATE LISTENER (approccio ibrido)
+    # ========================================
+    # AZIONE: CREATE LISTENER
     # ========================================
     - name: Create new Listener
       when: action == 'create_listener'
@@ -636,13 +662,12 @@
               - listener_protocol is defined
               - listener_port is defined
               - listener_port | int > 0
-            fail_msg: " Parametri mancanti per create_listener"
+            fail_msg: "❌ Parametri mancanti per create_listener"
 
         - name: Log listener creation
           debug:
-            msg: "➕ Creazione nuovo Listener '{{ listener_name }}' su LB ID {{ loadbalancer_id }}"
+            msg: "➕ Creazione Listener '{{ listener_name }}' su LB {{ loadbalancer_id }}"
 
-        # Ottieni il nome del LB dall'ID
         - name: Get Load Balancer name from ID
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
@@ -658,8 +683,7 @@
           set_fact:
             lb_name_for_listener: "{{ lb_info_response.json.loadbalancer.name }}"
 
-        # Crea listener con parametri base (solo quelli supportati dal modulo)
-        - name: Create Listener using OpenStack module (parametri base)
+        - name: Create Listener using OpenStack module
           openstack.cloud.lb_listener:
             name: "{{ listener_name }}"
             load_balancer: "{{ lb_name_for_listener }}"
@@ -678,11 +702,6 @@
           set_fact:
             created_listener_id: "{{ listener_created.listener.id }}"
 
-        - name: Log listener created (parametri base)
-          debug:
-            msg: " Listener base creato con ID: {{ created_listener_id }}"
-
-        # Aggiorna listener con parametri avanzati via API
         - name: Build update body for advanced parameters
           set_fact:
             listener_update_body:
@@ -723,9 +742,8 @@
             return_content: yes
             validate_certs: no
           when: listener_update_body.listener | length > 0
-          register: listener_updated
 
-        - name: Wait for LB to be ACTIVE after listener creation
+        - name: Wait for LB to be ACTIVE
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
             method: GET
@@ -739,9 +757,9 @@
           retries: 30
           delay: 5
 
-        - name: Log Listener creation complete
+        - name: Log Listener created
           debug:
-            msg: " Listener '{{ listener_name }}' creato completamente su porta {{ listener_port }}"
+            msg: "✅ Listener '{{ listener_name }}' creato su porta {{ listener_port }}"
 
         - name: Notify Listener created
           uri:
@@ -754,7 +772,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: " Listener '{{ listener_name }}' creato su porta {{ listener_port }}"
+                message: "✅ Listener '{{ listener_name }}' creato su porta {{ listener_port }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -777,13 +795,12 @@
               - pool_name | length > 0
               - pool_protocol is defined
               - pool_lb_algorithm is defined
-            fail_msg: " Parametri mancanti per create_pool"
+            fail_msg: "❌ Parametri mancanti per create_pool"
 
         - name: Log pool creation
           debug:
-            msg: " Creazione nuovo Pool '{{ pool_name }}' su LB ID {{ loadbalancer_id }}"
+            msg: "➕ Creazione Pool '{{ pool_name }}' su LB {{ loadbalancer_id }}"
 
-        # Controlla se il listener ha già un default pool (se listener_id fornito)
         - name: Check if listener has default pool
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/listeners/{{ listener_id }}"
@@ -802,15 +819,7 @@
             listener_name_for_pool: "{{ listener_info_response.json.listener.name }}"
           when: listener_id is defined
 
-        - name: Log listener pool status
-          debug:
-            msg: " Listener ha già un default pool, creerò il pool standalone"
-          when: 
-            - listener_id is defined
-            - listener_has_default_pool | default(false)
-
-        # Crea pool SENZA listener se il listener ha già un pool, ALTRIMENTI con listener
-        - name: Create Pool using OpenStack module (con listener)
+        - name: Create Pool with listener
           openstack.cloud.lb_pool:
             name: "{{ pool_name }}"
             listener: "{{ listener_name_for_pool }}"
@@ -825,8 +834,7 @@
             - listener_id is defined
             - not (listener_has_default_pool | default(false))
 
-        # Ottieni nome LB dall'ID per creare pool standalone
-        - name: Get Load Balancer name from ID
+        - name: Get Load Balancer name
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
             method: GET
@@ -845,7 +853,7 @@
           when: 
             - listener_id is not defined or (listener_has_default_pool | default(false))
 
-        - name: Create Pool using OpenStack module (standalone o se listener ha già pool)
+        - name: Create Pool standalone
           openstack.cloud.lb_pool:
             name: "{{ pool_name }}"
             loadbalancer: "{{ lb_name_for_pool }}"
@@ -863,12 +871,7 @@
           set_fact:
             created_pool_id: "{{ pool_created.pool.id }}"
 
-        - name: Log pool created (parametri base)
-          debug:
-            msg: " Pool base creato con ID: {{ created_pool_id }}"
-
-        # Aggiorna pool con parametri avanzati via API
-        - name: Build update body for advanced pool parameters
+        - name: Build update body for advanced parameters
           set_fact:
             pool_update_body:
               pool: {}
@@ -879,7 +882,6 @@
           when: 
             - pool_session_persistence is defined
             - pool_session_persistence != "None"
-            - pool_session_persistence != ""
 
         - name: Add tls_enabled to update
           set_fact:
@@ -891,7 +893,7 @@
             pool_update_body: "{{ pool_update_body | combine({'pool': pool_update_body.pool | combine({'admin_state_up': pool_admin_state | bool})}) }}"
           when: pool_admin_state is defined
 
-        - name: Update Pool with advanced parameters via API
+        - name: Update Pool with advanced parameters
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ created_pool_id }}"
             method: PUT
@@ -904,9 +906,8 @@
             return_content: yes
             validate_certs: no
           when: pool_update_body.pool | length > 0
-          register: pool_updated
 
-        - name: Wait for LB to be ACTIVE after pool creation
+        - name: Wait for LB to be ACTIVE
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
             method: GET
@@ -920,9 +921,9 @@
           retries: 30
           delay: 5
 
-        - name: Log Pool creation complete
+        - name: Log Pool created
           debug:
-            msg: " Pool '{{ pool_name }}' creato completamente con algoritmo {{ pool_lb_algorithm }}{{ ' (standalone - da associare manualmente al listener)' if (listener_id is defined and listener_has_default_pool | default(false)) else '' }}"
+            msg: "✅ Pool '{{ pool_name }}' creato con algoritmo {{ pool_lb_algorithm }}"
 
         - name: Notify Pool created
           uri:
@@ -935,7 +936,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: " Pool '{{ pool_name }}' creato con algoritmo {{ pool_lb_algorithm }}{{ ' - Listener ha già un pool, creato standalone' if (listener_id is defined and listener_has_default_pool | default(false)) else '' }}"
+                message: "✅ Pool '{{ pool_name }}' creato con algoritmo {{ pool_lb_algorithm }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -944,6 +945,7 @@
             validate_certs: no
           when: manageiq_notification_url is defined
           ignore_errors: yes
+
     # ========================================
     # AZIONE: CREATE HEALTH MONITOR
     # ========================================
@@ -959,13 +961,12 @@
               - monitor_type is defined
               - monitor_delay is defined
               - monitor_timeout is defined
-            fail_msg: " Parametri mancanti per create_monitor"
+            fail_msg: "❌ Parametri mancanti per create_monitor"
 
         - name: Log health monitor creation
           debug:
-            msg: "➕ Creazione Health Monitor '{{ monitor_name }}' su Pool ID {{ pool_id }}"
+            msg: "➕ Creazione Health Monitor '{{ monitor_name }}' su Pool {{ pool_id }}"
 
-        # Ottieni il nome del pool dall'ID
         - name: Get Pool name from ID
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}"
@@ -981,8 +982,7 @@
           set_fact:
             pool_name_for_monitor: "{{ pool_info_response.json.pool.name }}"
 
-        # Crea health monitor per TCP/UDP/PING/TLS-HELLO/UDP-CONNECT (senza parametri HTTP)
-        - name: Create Health Monitor using OpenStack module (TCP/UDP/PING/TLS/UDP-CONNECT)
+        - name: Create Health Monitor (TCP/UDP/PING)
           openstack.cloud.lb_health_monitor:
             name: "{{ monitor_name }}"
             pool: "{{ pool_name_for_monitor }}"
@@ -997,8 +997,7 @@
           register: monitor_created_basic
           when: monitor_type | upper not in ['HTTP', 'HTTPS']
 
-        # Crea health monitor per HTTP/HTTPS (con parametri HTTP)
-        - name: Create Health Monitor using OpenStack module (HTTP/HTTPS)
+        - name: Create Health Monitor (HTTP/HTTPS)
           openstack.cloud.lb_health_monitor:
             name: "{{ monitor_name }}"
             pool: "{{ pool_name_for_monitor }}"
@@ -1016,28 +1015,10 @@
           register: monitor_created_http
           when: monitor_type | upper in ['HTTP', 'HTTPS']
 
-        # Estrai l'ID dal task che è stato effettivamente eseguito
-        - name: Extract created monitor ID from basic monitor
+        - name: Extract created monitor ID
           set_fact:
-            created_monitor_id: "{{ monitor_created_basic.health_monitor.id }}"
-          when: 
-            - monitor_type | upper not in ['HTTP', 'HTTPS']
-            - monitor_created_basic is defined
-            - monitor_created_basic is not skipped
+            created_monitor_id: "{{ monitor_created_basic.health_monitor.id if monitor_created_basic is defined and monitor_created_basic is not skipped else monitor_created_http.health_monitor.id }}"
 
-        - name: Extract created monitor ID from HTTP monitor
-          set_fact:
-            created_monitor_id: "{{ monitor_created_http.health_monitor.id }}"
-          when: 
-            - monitor_type | upper in ['HTTP', 'HTTPS']
-            - monitor_created_http is defined
-            - monitor_created_http is not skipped
-
-        - name: Log monitor created
-          debug:
-            msg: " Health Monitor base creato con ID: {{ created_monitor_id }}"
-
-        # Aggiorna admin_state_up se fornito (non supportato direttamente dal modulo in create)
         - name: Build update body for admin state
           set_fact:
             monitor_update_body:
@@ -1045,7 +1026,7 @@
                 admin_state_up: "{{ monitor_admin_state | bool }}"
           when: monitor_admin_state is defined
 
-        - name: Update Health Monitor admin state via API
+        - name: Update Health Monitor admin state
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/healthmonitors/{{ created_monitor_id }}"
             method: PUT
@@ -1060,9 +1041,8 @@
           when: 
             - monitor_admin_state is defined
             - monitor_update_body is defined
-          register: monitor_updated
 
-        - name: Wait for LB to be ACTIVE after monitor creation
+        - name: Wait for LB to be ACTIVE
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
             method: GET
@@ -1076,9 +1056,9 @@
           retries: 30
           delay: 5
 
-        - name: Log Health Monitor creation complete
+        - name: Log Health Monitor created
           debug:
-            msg: " Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato con successo"
+            msg: "✅ Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato"
 
         - name: Notify Health Monitor created
           uri:
@@ -1091,7 +1071,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: " Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato - Delay: {{ monitor_delay }}s, Timeout: {{ monitor_timeout }}s"
+                message: "✅ Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -1101,30 +1081,25 @@
           when: manageiq_notification_url is defined
           ignore_errors: yes
 
-
-   # ========================================
-    # AZIONE: ADD INTERNAL MEMBER TO POOL
     # ========================================
-
-    
+    # AZIONE: ADD INTERNAL MEMBER
+    # ========================================
     - name: Add internal member to pool
       when: action == 'add_internal_member'
       block:
-        - name: Validate add internal member parameters
+        - name: Validate add member parameters
           assert:
             that:
               - pool_id is defined
-              - pool_id | length > 0
               - member_name is defined
               - member_address is defined
               - member_protocol_port is defined
-            fail_msg: " Parametri mancanti per add_internal_member"
+            fail_msg: "❌ Parametri mancanti per add_internal_member"
 
-        - name: Log internal member addition
+        - name: Log member addition
           debug:
-            msg: " Aggiunta membro interno '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) al Pool ID {{ pool_id }}"
+            msg: "➕ Aggiunta membro '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) al Pool {{ pool_id }}"
 
-        # Ottieni informazioni del Load Balancer per subnet
         - name: Get Load Balancer info
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
@@ -1140,12 +1115,7 @@
           set_fact:
             lb_vip_subnet_id: "{{ lb_info_response.json.loadbalancer.vip_subnet_id }}"
 
-        - name: Log LB subnet
-          debug:
-            msg: " Load Balancer VIP Subnet: {{ lb_vip_subnet_id }}"
-
-        # Ottieni informazioni del pool
-        - name: Get Pool info from ID
+        - name: Get Pool info
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}"
             method: GET
@@ -1156,21 +1126,14 @@
             validate_certs: no
           register: pool_info_response
 
-        - name: Extract Pool info
+        - name: Extract Pool subnet
           set_fact:
-            pool_name_for_member: "{{ pool_info_response.json.pool.name }}"
             pool_subnet_id: "{{ pool_info_response.json.pool.subnet_id | default('') }}"
 
-        # Usa pool subnet se disponibile, altrimenti usa LB subnet
         - name: Determine subnet for member
           set_fact:
             final_subnet_id: "{{ pool_subnet_id if pool_subnet_id != '' else lb_vip_subnet_id }}"
 
-        - name: Log subnet selection
-          debug:
-            msg: " Pool: {{ pool_name_for_member }} | Pool Subnet: {{ pool_subnet_id if pool_subnet_id != '' else 'N/A' }} | Subnet usato: {{ final_subnet_id }}"
-
-        # Crea il body per la chiamata API diretta (più controllo sui parametri)
         - name: Build member create body
           set_fact:
             member_create_body:
@@ -1182,34 +1145,26 @@
                 weight: "{{ member_weight | default(1) | int }}"
                 admin_state_up: "{{ member_admin_state | default(true) | bool }}"
 
-        # Aggiungi monitor address/port se forniti
-        - name: Add monitor address to body
+        - name: Add monitor address
           set_fact:
             member_create_body: "{{ member_create_body | combine({'member': member_create_body.member | combine({'monitor_address': member_monitor_address})}) }}"
           when: 
             - member_monitor_address is defined
             - member_monitor_address | length > 0
 
-        - name: Add monitor port to body
+        - name: Add monitor port
           set_fact:
             member_create_body: "{{ member_create_body | combine({'member': member_create_body.member | combine({'monitor_port': member_monitor_port | int})}) }}"
           when: 
             - member_monitor_port is defined
             - member_monitor_port | int > 0
 
-        # Aggiungi backup flag se fornito
-        - name: Add backup flag to body
+        - name: Add backup flag
           set_fact:
             member_create_body: "{{ member_create_body | combine({'member': member_create_body.member | combine({'backup': member_backup | bool})}) }}"
-          when: 
-            - member_backup is defined
+          when: member_backup is defined
 
-        - name: Log create body
-          debug:
-            msg: " Create body: {{ member_create_body }}"
-
-        # Crea il membro via API diretta
-        - name: Create member via Octavia API
+        - name: Create member via API
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/pools/{{ pool_id }}/members"
             method: POST
@@ -1223,15 +1178,7 @@
             validate_certs: no
           register: member_created
 
-        - name: Extract created member ID
-          set_fact:
-            created_member_id: "{{ member_created.json.member.id }}"
-
-        - name: Log member created
-          debug:
-            msg: " Membro interno creato con ID: {{ created_member_id }}"
-
-        - name: Wait for LB to be ACTIVE after member addition
+        - name: Wait for LB to be ACTIVE
           uri:
             url: "{{ octavia_url }}/v2.0/lbaas/loadbalancers/{{ loadbalancer_id }}"
             method: GET
@@ -1245,11 +1192,11 @@
           retries: 30
           delay: 5
 
-        - name: Log internal member addition complete
+        - name: Log member added
           debug:
-            msg: " Membro interno '{{ member_name }}' aggiunto al pool con successo"
+            msg: "✅ Membro '{{ member_name }}' aggiunto al pool"
 
-        - name: Notify internal member added
+        - name: Notify member added
           uri:
             url: "{{ manageiq_notification_url }}"
             method: POST
@@ -1260,7 +1207,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: " Membro interno '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) aggiunto al pool"
+                message: "✅ Membro '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) aggiunto"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -1270,22 +1217,21 @@
           when: manageiq_notification_url is defined
           ignore_errors: yes
 
-
-          
     # ========================================
     # FINAL SUMMARY
     # ========================================
     - name: Generate final summary
       debug:
         msg: |
-          ╔═══════════════════════════════════════════════════════════════════╗
-          ║              LOAD BALANCER MODIFICATO CON SUCCESSO                ║
-          ╚═══════════════════════════════════════════════════════════════════╝
+          ╔═══════════════════════════════════════════════════════════════╗
+          ║         LOAD BALANCER MODIFICATO CON SUCCESSO                ║
+          ╚═══════════════════════════════════════════════════════════════╝
           
           Load Balancer: {{ lb_name }}
           Azione:        {{ action }}
           VIP:           {{ lb_vip_address }}
           Status:        {{ lb_operating_status }}
+          Tenant:        {{ openstack_project_name | default(openstack_project_id) }}
 
     - name: Send final notification
       uri:
@@ -1298,7 +1244,7 @@
           action: "update"
           resource:
             level: "success"
-            message: " Load Balancer modificato con successo | Azione: {{ action }}"
+            message: "✅ Load Balancer modificato con successo | Azione: {{ action }}"
             subject_type: "User"
             subject_id: "{{ manageiq_user_id }}"
         body_format: json
