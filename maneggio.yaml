@@ -1,7 +1,8 @@
 ---
 # ============================================
-# Playbook AWX: Manage Backup Schedule Actions
+# Playbook AWX: Manage Backup Schedule Actions (MULTI-TENANT)
 # Attiva, disattiva o elimina schedule esistenti
+# VERIFICA CHE LO SCHEDULE APPARTENGA AL TENANT CORRETTO
 # ============================================
 
 - name: Manage Backup Schedule Actions
@@ -27,67 +28,27 @@
           - schedule_id is defined and schedule_id | length > 0
           - manage_action is defined and manage_action | length > 0
           - manage_action in ['activate', 'deactivate', 'disable']
+          - tenant_name is defined and tenant_name | length > 0
         fail_msg: "ERROR: Missing or invalid variables"
-        success_msg: "Variables OK"
+        success_msg: "✓ Variables OK"
     
-    # =============================================
-    # 2. RECUPERA NOME VOLUME DA OPENSTACK (CON FALLBACK)
-    # =============================================
-    
-    - name: Try to get volume from OpenStack
-      block:
-        - name: Get all volumes from OpenStack
-          openstack.cloud.volume_info:
-            details: true
-          register: all_volumes
-        
-        - name: Find volume by ID
-          set_fact:
-            volume_data: "{{ all_volumes.volumes | selectattr('id', 'equalto', volume_id) | first | default(None) }}"
-        
-        - name: Check if volume exists in OpenStack
-          fail:
-            msg: "Volume {{ volume_id }} not found in OpenStack"
-          when: volume_data is none
-        
-        - name: Set volume name from OpenStack
-          set_fact:
-            volume_name: "{{ volume_data.name }}"
-        
-        - name: Display success - volume found in OpenStack
-          debug:
-            msg: "✓ Volume trovato in OpenStack: {{ volume_name }}"
-      
-      rescue:
-        - name: Cinder service not available - using fallback
-          debug:
-            msg: 
-              - "⚠ Servizio Cinder non disponibile o non accessibile"
-              - "Utilizzo volume_id come identificatore"
-        
-        - name: Set fallback volume name
-          set_fact:
-            volume_name: "volume_{{ volume_id[:8] }}"
-            volume_data:
-              id: "{{ volume_id }}"
-              name: "volume_{{ volume_id[:8] }}"
-        
-        - name: Display fallback info
-          debug:
-            msg: "✓ Utilizzo nome fallback: {{ volume_name }}"
-    
-    - name: Confirm volume info
+    - name: Log initial info
       debug:
-        msg: 
-          - "Volume configurato:"
-          - "  - Nome: {{ volume_name }}"
-          - "  - ID: {{ volume_id }}"
+        msg:
+          - "=============================================="
+          - "GESTIONE BACKUP SCHEDULE (MULTI-TENANT)"
+          - "=============================================="
+          - "Azione: {{ manage_action }}"
+          - "Schedule ID: {{ schedule_id }}"
+          - "Volume ID: {{ volume_id }}"
+          - "Tenant: {{ tenant_name }}"
+          - "=============================================="
     
     # =============================================
-    # 3. RECUPERA DETTAGLI SCHEDULE
+    # 2. RECUPERA DETTAGLI SCHEDULE DA AWX
     # =============================================
     
-    - name: Get schedule details
+    - name: Get schedule details from AWX
       uri:
         url: "{{ awx_host }}/api/v2/schedules/{{ schedule_id }}/"
         method: GET
@@ -101,15 +62,36 @@
     - name: Display schedule info
       debug:
         msg:
-          - "=============================================="
-          - "GESTIONE BACKUP SCHEDULE"
-          - "=============================================="
-          - "Azione: {{ manage_action }}"
-          - "Schedule ID: {{ schedule_id }}"
-          - "Schedule Name: {{ schedule_details.json.name }}"
-          - "Volume: {{ volume_name }} ({{ volume_id }})"
-          - "Stato attuale: {{ 'Attivo' if schedule_details.json.enabled else 'Disattivo' }}"
-          - "=============================================="
+          - "Schedule trovato in AWX:"
+          - "  Nome: {{ schedule_details.json.name }}"
+          - "  Enabled: {{ schedule_details.json.enabled }}"
+          - "  Extra data: {{ schedule_details.json.extra_data | default({}) }}"
+    
+    # =============================================
+    # 3. VERIFICA CHE LO SCHEDULE APPARTENGA AL TENANT
+    # =============================================
+    
+    - name: Extract tenant from schedule extra_data
+      set_fact:
+        schedule_tenant: "{{ schedule_details.json.extra_data.tenant_name | default('') }}"
+      when: schedule_details.json.extra_data is defined
+    
+    - name: Check tenant match
+      fail:
+        msg: |
+          ❌ ERRORE DI SICUREZZA: Lo schedule non appartiene al tenant selezionato!
+          
+          Tenant selezionato: {{ tenant_name }}
+          Tenant dello schedule: {{ schedule_tenant | default('NON SPECIFICATO') }}
+          
+          Non puoi gestire schedule di altri tenant!
+      when: 
+        - schedule_tenant is defined
+        - schedule_tenant != tenant_name
+    
+    - name: Log tenant verification success
+      debug:
+        msg: "✅ Verifica tenant OK - Lo schedule appartiene al tenant {{ tenant_name }}"
     
     # =============================================
     # 4. AZIONE: ACTIVATE
@@ -137,7 +119,8 @@
           - "✓ BACKUP SCHEDULE ATTIVATO"
           - "=============================================="
           - "Schedule: {{ schedule_details.json.name }}"
-          - "Volume: {{ volume_name }} ({{ volume_id }})"
+          - "Volume ID: {{ volume_id }}"
+          - "Tenant: {{ tenant_name }}"
           - "Prossima esecuzione: {{ schedule_details.json.next_run | default('N/A') }}"
           - "=============================================="
       when: manage_action == "activate"
@@ -168,7 +151,8 @@
           - "✓ BACKUP SCHEDULE DISATTIVATO"
           - "=============================================="
           - "Schedule: {{ schedule_details.json.name }}"
-          - "Volume: {{ volume_name }} ({{ volume_id }})"
+          - "Volume ID: {{ volume_id }}"
+          - "Tenant: {{ tenant_name }}"
           - "Lo schedule è stato disattivato ma non eliminato"
           - "=============================================="
       when: manage_action == "deactivate"
@@ -196,7 +180,8 @@
           - "✓ BACKUP SCHEDULE ELIMINATO"
           - "=============================================="
           - "Schedule: {{ schedule_details.json.name }}"
-          - "Volume: {{ volume_name }} ({{ volume_id }})"
+          - "Volume ID: {{ volume_id }}"
+          - "Tenant: {{ tenant_name }}"
           - "Lo schedule è stato eliminato definitivamente"
           - "=============================================="
       when: manage_action == "disable"
