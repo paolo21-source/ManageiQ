@@ -45,7 +45,7 @@
           - openstack_username is defined
           - openstack_password is defined
           - openstack_project_id is defined or openstack_project_name is defined
-        fail_msg: "❌ Credenziali OpenStack mancanti!"
+        fail_msg: " Credenziali OpenStack mancanti!"
 
     - name: Determine authentication method
       set_fact:
@@ -53,7 +53,7 @@
 
     - name: Log authentication
       debug:
-        msg: "🔐 Autenticazione OpenStack: {{ 'Project ID (UUID)' if use_project_id else 'Project Name' }} = {{ openstack_project_id if use_project_id else openstack_project_name }}"
+        msg: " Autenticazione OpenStack: {{ 'Project ID (UUID)' if use_project_id else 'Project Name' }} = {{ openstack_project_id if use_project_id else openstack_project_name }}"
 
     - name: Authenticate with project ID
       uri:
@@ -121,7 +121,7 @@
 
     - name: Log successful authentication
       debug:
-        msg: "✅ Autenticato su OpenStack | Tenant: {{ openstack_project_name | default(openstack_project_id) }}"
+        msg: " Autenticato su OpenStack | Tenant: {{ openstack_project_name | default(openstack_project_id) }}"
 
     # ========================================
     # CONFIGURE OPENSTACK CLIENT ENVIRONMENT
