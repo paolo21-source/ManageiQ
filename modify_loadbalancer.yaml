@@ -17,11 +17,11 @@
           - openstack_username is defined
           - openstack_password is defined
           - openstack_project_id is defined or openstack_project_name is defined
-        fail_msg: "❌ ERRORE: Variabili richieste mancanti!"
+        fail_msg: " ERRORE: Variabili richieste mancanti!"
 
     - name: Log start
       debug:
-        msg: "🚀 Modifica Load Balancer ID: {{ loadbalancer_id }} | Azione: {{ action }} | Tenant: {{ openstack_project_name | default(openstack_project_id) }}"
+        msg: " Modifica Load Balancer ID: {{ loadbalancer_id }} | Azione: {{ action }} | Tenant: {{ openstack_project_name | default(openstack_project_id) }}"
 
     # ========================================
     # NOTIFICA: INIZIO
@@ -37,7 +37,7 @@
           action: "update"
           resource:
             level: "info"
-            message: "⚙️ Avvio modifica Load Balancer | Azione: {{ action }}"
+            message: " Avvio modifica Load Balancer | Azione: {{ action }}"
             subject_type: "User"
             subject_id: "{{ manageiq_user_id }}"
         body_format: json
@@ -58,7 +58,7 @@
 
     - name: Log authentication method
       debug:
-        msg: "🔐 Autenticazione: {{ 'Project ID (UUID): ' + openstack_project_id if use_project_id else 'Project Name: ' + openstack_project_name }}"
+        msg: " Autenticazione: {{ 'Project ID (UUID): ' + openstack_project_id if use_project_id else 'Project Name: ' + openstack_project_name }}"
 
     - name: Authenticate with project ID
       uri:
@@ -126,7 +126,7 @@
 
     - name: Log successful authentication
       debug:
-        msg: "✅ Autenticato su OpenStack | Tenant: {{ openstack_project_name | default(openstack_project_id) }}"
+        msg: " Autenticato su OpenStack | Tenant: {{ openstack_project_name | default(openstack_project_id) }}"
 
     - name: Find Octavia endpoint
       set_fact:
@@ -141,12 +141,12 @@
 
     - name: Fail if Octavia not found
       fail:
-        msg: "❌ Servizio Octavia non trovato nel service catalog"
+        msg: " Servizio Octavia non trovato nel service catalog"
       when: octavia_url is not defined or octavia_url == ""
 
     - name: Log Octavia endpoint
       debug:
-        msg: "✅ Octavia endpoint: {{ octavia_url }}"
+        msg: " Octavia endpoint: {{ octavia_url }}"
 
     # ========================================
     # GET LOAD BALANCER INFO
@@ -173,7 +173,7 @@
 
     - name: Log Load Balancer info
       debug:
-        msg: "📋 Load Balancer: {{ lb_name }} (VIP: {{ lb_vip_address }}, Status: {{ lb_operating_status }})"
+        msg: " Load Balancer: {{ lb_name }} (VIP: {{ lb_vip_address }}, Status: {{ lb_operating_status }})"
 
     # ========================================
     # AZIONE: UPDATE LOAD BALANCER
@@ -243,7 +243,7 @@
 
         - name: Log LB updated
           debug:
-            msg: "✅ Load Balancer '{{ new_lb_name }}' aggiornato con successo"
+            msg: " Load Balancer '{{ new_lb_name }}' aggiornato con successo"
 
         - name: Notify LB updated
           uri:
@@ -256,7 +256,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Load Balancer '{{ new_lb_name }}' aggiornato con successo"
+                message: " Load Balancer '{{ new_lb_name }}' aggiornato con successo"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -277,11 +277,11 @@
             that:
               - listener_id is defined
               - listener_id | length > 0
-            fail_msg: "❌ Listener ID obbligatorio"
+            fail_msg: " Listener ID obbligatorio"
 
         - name: Log listener update
           debug:
-            msg: "⚙️ Aggiornamento Listener ID: {{ listener_id }}"
+            msg: " Aggiornamento Listener ID: {{ listener_id }}"
 
         - name: Build update body for Listener
           set_fact:
@@ -392,7 +392,7 @@
 
         - name: Log Listener updated
           debug:
-            msg: "✅ Listener '{{ new_listener_name }}' aggiornato con successo"
+            msg: " Listener '{{ new_listener_name }}' aggiornato con successo"
 
         - name: Notify Listener updated
           uri:
@@ -405,7 +405,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Listener '{{ new_listener_name }}' aggiornato con successo"
+                message: " Listener '{{ new_listener_name }}' aggiornato con successo"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -426,11 +426,11 @@
             that:
               - pool_id is defined
               - pool_id | length > 0
-            fail_msg: "❌ Pool ID obbligatorio"
+            fail_msg: " Pool ID obbligatorio"
 
         - name: Log pool update
           debug:
-            msg: "⚙️ Aggiornamento Pool ID: {{ pool_id }}"
+            msg: " Aggiornamento Pool ID: {{ pool_id }}"
 
         - name: Build update body for Pool
           set_fact:
@@ -512,7 +512,7 @@
 
         - name: Log Pool updated
           debug:
-            msg: "✅ Pool '{{ new_pool_name }}' aggiornato con successo"
+            msg: " Pool '{{ new_pool_name }}' aggiornato con successo"
 
         - name: Notify Pool updated
           uri:
@@ -525,7 +525,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Pool '{{ new_pool_name }}' aggiornato con successo"
+                message: " Pool '{{ new_pool_name }}' aggiornato con successo"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -546,11 +546,11 @@
             that:
               - health_monitor_id is defined
               - health_monitor_id | length > 0
-            fail_msg: "❌ Health Monitor ID obbligatorio"
+            fail_msg: " Health Monitor ID obbligatorio"
 
         - name: Log health monitor update
           debug:
-            msg: "⚙️ Aggiornamento Health Monitor ID: {{ health_monitor_id }}"
+            msg: " Aggiornamento Health Monitor ID: {{ health_monitor_id }}"
 
         - name: Build update body for Health Monitor
           set_fact:
@@ -637,7 +637,7 @@
 
         - name: Log HM updated
           debug:
-            msg: "✅ Health Monitor aggiornato"
+            msg: " Health Monitor aggiornato"
 
         - name: Notify Health Monitor updated
           uri:
@@ -650,7 +650,7 @@
               action: "update"
               resource:
                 level: "success"
-                message: "✅ Health Monitor aggiornato con successo"
+                message: " Health Monitor aggiornato con successo"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -674,11 +674,11 @@
               - listener_protocol is defined
               - listener_port is defined
               - listener_port | int > 0
-            fail_msg: "❌ Parametri mancanti per create_listener"
+            fail_msg: " Parametri mancanti per create_listener"
 
         - name: Log listener creation
           debug:
-            msg: "➕ Creazione Listener '{{ listener_name }}' su LB {{ loadbalancer_id }}"
+            msg: " Creazione Listener '{{ listener_name }}' su LB {{ loadbalancer_id }}"
 
         - name: Get Load Balancer name from ID
           uri:
@@ -771,7 +771,7 @@
 
         - name: Log Listener created
           debug:
-            msg: "✅ Listener '{{ listener_name }}' creato su porta {{ listener_port }}"
+            msg: " Listener '{{ listener_name }}' creato su porta {{ listener_port }}"
 
         - name: Notify Listener created
           uri:
@@ -784,7 +784,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: "✅ Listener '{{ listener_name }}' creato su porta {{ listener_port }}"
+                message: " Listener '{{ listener_name }}' creato su porta {{ listener_port }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -807,11 +807,11 @@
               - pool_name | length > 0
               - pool_protocol is defined
               - pool_lb_algorithm is defined
-            fail_msg: "❌ Parametri mancanti per create_pool"
+            fail_msg: " Parametri mancanti per create_pool"
 
         - name: Log pool creation
           debug:
-            msg: "➕ Creazione Pool '{{ pool_name }}' su LB {{ loadbalancer_id }}"
+            msg: " Creazione Pool '{{ pool_name }}' su LB {{ loadbalancer_id }}"
 
         - name: Check if listener has default pool
           uri:
@@ -935,7 +935,7 @@
 
         - name: Log Pool created
           debug:
-            msg: "✅ Pool '{{ pool_name }}' creato con algoritmo {{ pool_lb_algorithm }}"
+            msg: " Pool '{{ pool_name }}' creato con algoritmo {{ pool_lb_algorithm }}"
 
         - name: Notify Pool created
           uri:
@@ -948,7 +948,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: "✅ Pool '{{ pool_name }}' creato con algoritmo {{ pool_lb_algorithm }}"
+                message: " Pool '{{ pool_name }}' creato con algoritmo {{ pool_lb_algorithm }}"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -973,11 +973,11 @@
               - monitor_type is defined
               - monitor_delay is defined
               - monitor_timeout is defined
-            fail_msg: "❌ Parametri mancanti per create_monitor"
+            fail_msg: " Parametri mancanti per create_monitor"
 
         - name: Log health monitor creation
           debug:
-            msg: "➕ Creazione Health Monitor '{{ monitor_name }}' su Pool {{ pool_id }}"
+            msg: " Creazione Health Monitor '{{ monitor_name }}' su Pool {{ pool_id }}"
 
         - name: Get Pool name from ID
           uri:
@@ -1070,7 +1070,7 @@
 
         - name: Log Health Monitor created
           debug:
-            msg: "✅ Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato"
+            msg: " Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato"
 
         - name: Notify Health Monitor created
           uri:
@@ -1083,7 +1083,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: "✅ Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato"
+                message: " Health Monitor '{{ monitor_name }}' ({{ monitor_type }}) creato"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -1106,11 +1106,11 @@
               - member_name is defined
               - member_address is defined
               - member_protocol_port is defined
-            fail_msg: "❌ Parametri mancanti per add_internal_member"
+            fail_msg: " Parametri mancanti per add_internal_member"
 
         - name: Log member addition
           debug:
-            msg: "➕ Aggiunta membro '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) al Pool {{ pool_id }}"
+            msg: " Aggiunta membro '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) al Pool {{ pool_id }}"
 
         - name: Get Load Balancer info
           uri:
@@ -1206,7 +1206,7 @@
 
         - name: Log member added
           debug:
-            msg: "✅ Membro '{{ member_name }}' aggiunto al pool"
+            msg: " Membro '{{ member_name }}' aggiunto al pool"
 
         - name: Notify member added
           uri:
@@ -1219,7 +1219,7 @@
               action: "create"
               resource:
                 level: "success"
-                message: "✅ Membro '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) aggiunto"
+                message: " Membro '{{ member_name }}' ({{ member_address }}:{{ member_protocol_port }}) aggiunto"
                 subject_type: "User"
                 subject_id: "{{ manageiq_user_id }}"
             body_format: json
@@ -1256,7 +1256,7 @@
           action: "update"
           resource:
             level: "success"
-            message: "✅ Load Balancer modificato con successo | Azione: {{ action }}"
+            message: " Load Balancer modificato con successo | Azione: {{ action }}"
             subject_type: "User"
             subject_id: "{{ manageiq_user_id }}"
         body_format: json
