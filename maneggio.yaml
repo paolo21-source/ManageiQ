@@ -79,7 +79,7 @@
     - name: Check tenant match
       fail:
         msg: |
-          ❌ ERRORE DI SICUREZZA: Lo schedule non appartiene al tenant selezionato!
+           ERRORE DI SICUREZZA: Lo schedule non appartiene al tenant selezionato!
           
           Tenant selezionato: {{ tenant_name }}
           Tenant dello schedule: {{ schedule_tenant | default('NON SPECIFICATO') }}
@@ -91,7 +91,7 @@
     
     - name: Log tenant verification success
       debug:
-        msg: "✅ Verifica tenant OK - Lo schedule appartiene al tenant {{ tenant_name }}"
+        msg: " Verifica tenant OK - Lo schedule appartiene al tenant {{ tenant_name }}"
     
     # =============================================
     # 4. AZIONE: ACTIVATE
