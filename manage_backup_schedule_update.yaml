@@ -58,7 +58,7 @@
 
     - name: Log authentication
       debug:
-        msg: "🔐 Autenticazione OpenStack: {{ 'Project ID (UUID)' if use_project_id else 'Project Name' }} = {{ openstack_project_id if use_project_id else openstack_project_name }}"
+        msg: " Autenticazione OpenStack: {{ 'Project ID (UUID)' if use_project_id else 'Project Name' }} = {{ openstack_project_id if use_project_id else openstack_project_name }}"
 
     - name: Authenticate with project ID
       uri:
@@ -124,7 +124,7 @@
 
     - name: Log successful authentication
       debug:
-        msg: "✅ Autenticato su OpenStack | Tenant: {{ tenant_name }}"
+        msg: " Autenticato su OpenStack | Tenant: {{ tenant_name }}"
     
     # =============================================
     # 3. VERIFICA ESISTENZA VOLUME (con autenticazione)
@@ -159,18 +159,18 @@
         
         - name: Display success - volume found
           debug:
-            msg: "✓ Volume trovato in OpenStack: {{ volume_name }} ({{ volume_id }})"
+            msg: " Volume trovato in OpenStack: {{ volume_name }} ({{ volume_id }})"
           when: volume_exists
         
         - name: Fail if volume doesn't exist
           fail:
-            msg: "❌ Volume {{ volume_id }} non trovato nel tenant {{ tenant_name }}"
+            msg: " Volume {{ volume_id }} non trovato nel tenant {{ tenant_name }}"
           when: not volume_exists
       
       rescue:
         - name: Handle OpenStack API error
           debug:
-            msg: "⚠️ Errore accesso OpenStack API - impossibile verificare esistenza volume"
+            msg: " Errore accesso OpenStack API - impossibile verificare esistenza volume"
         
         - name: Use fallback volume name
           set_fact:
