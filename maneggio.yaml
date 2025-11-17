@@ -78,13 +78,13 @@
     
     - name: Check tenant match
       fail:
-        msg: |
-           ERRORE DI SICUREZZA: Lo schedule non appartiene al tenant selezionato!
-          
-          Tenant selezionato: "{{ tenant_name }}"
-          Tenant dello schedule: "{{ schedule_tenant | default('NON SPECIFICATO') }}"
-          
-          Non puoi gestire schedule di altri tenant!
+        msg:
+          - "ERRORE DI SICUREZZA: Lo schedule non appartiene al tenant selezionato!"
+          - ""
+          - "Tenant selezionato: {{ tenant_name }}"
+          - "Tenant dello schedule: {{ schedule_tenant | default('NON SPECIFICATO') }}"
+          - ""
+          - "Non puoi gestire schedule di altri tenant!"
       when: 
         - schedule_tenant is defined
         - schedule_tenant != tenant_name
